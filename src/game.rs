@@ -15,12 +15,11 @@ pub struct Game {
 
 impl Game {
     #[must_use]
-    pub fn new(mut world: World) -> Self {
+    pub fn new(mut world: World, color: Color) -> Self {
         let rules = game();
         start(&rules, &mut world).unwrap();
 
-        let side_to_move = world.active_team();
-        Self { world, color: side_to_move }
+        Self { world, color }
     }
 
     #[must_use]
@@ -38,15 +37,6 @@ impl Game {
         query_actions(&rules, &self.world).unwrap()
     }
 
-    #[must_use]
-    pub fn null_move(&self) -> Command {
-        if self.world.active_team() == self.color {
-            Command::Pass
-        } else {
-            Command::None
-        }
-    }
-
     pub fn play(&mut self, mov: Command) {
         let rules = game();
         let _decide = decide(mov, &rules, &mut self.world).unwrap();
@@ -56,8 +46,8 @@ impl Game {
 
     #[must_use]
     pub fn evaluate_f64(&self) -> f64 {
-        let mut max = 1.;
-        let mut min = 1.;
+        let mut max = 0.;
+        let mut min = 0.;
 
         for character in &self.world.characters {
             let health = f64::from(character.current_effective_health());

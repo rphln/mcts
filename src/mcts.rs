@@ -1,8 +1,10 @@
-use std::{fmt::Debug, iter::successors};
+use std::iter::successors;
 
 use rand::Rng;
 
 use crate::game::{Command, Game};
+
+// TODO: <https://gibberblot.github.io/rl-notes/single-agent/reward-shaping.html>
 
 /// An implementation of the Monte Carlo Tree Search algorithm with the
 /// following modifications:
@@ -47,15 +49,15 @@ pub struct MctsNode {
     /// The move used to reach this node.
     pub mov: Command,
     /// Number of visits to this node.
-    visits: usize,
+    pub visits: usize,
     /// Expected reward from this node.
-    utility: f64,
+    pub utility: f64,
     /// Index of the parent node; used for back-propagation of rewards.
-    parent: usize,
+    pub parent: usize,
     /// Index of the first child node.
-    head: usize,
+    pub head: usize,
     /// Index of the last child node.
-    last: usize,
+    pub last: usize,
 }
 
 impl MctsNode {
@@ -235,7 +237,9 @@ impl Mcts {
         let mut subtree = vec![MctsNode { parent: 0, ..root.clone() }];
 
         for parent in 0.. {
-            let Some(node) = subtree.get(parent) else { break };
+            let Some(node) = subtree.get(parent) else {
+                break;
+            };
 
             let head = subtree.len();
 
@@ -285,7 +289,9 @@ impl Mcts {
         let mut subtree = vec![self.root().clone()];
 
         for parent in 0.. {
-            let Some(node) = subtree.get(parent) else { break };
+            let Some(node) = subtree.get(parent) else {
+                break;
+            };
 
             let head = subtree.len();
 
@@ -322,7 +328,7 @@ fn epsilon_greedy_policy(tree: &[MctsNode], rng: &mut impl Rng) -> usize {
         return 0;
     }
 
-    if rng.random_bool(0.2) {
+    if rng.random_bool(0.1) {
         return rng.random_range(0..tree.len());
     }
 
@@ -336,7 +342,7 @@ fn epsilon_greedy_policy(tree: &[MctsNode], rng: &mut impl Rng) -> usize {
 
         let value = node.utility;
 
-        if value > best_value {
+        if value > best_value || (value == best_value && rng.random()) {
             best_index = index;
             best_value = value;
         }
