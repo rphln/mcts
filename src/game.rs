@@ -45,6 +45,25 @@ impl Game {
     }
 
     #[must_use]
+    pub fn evaluate_i32(&self) -> i32 {
+        let mut max = 0;
+        let mut min = 0;
+
+        for character in &self.world.characters {
+            let health = character.current_effective_health();
+            let score = (512 * health).isqrt();
+
+            if character.team == self.color {
+                max += score;
+            } else {
+                min += score;
+            }
+        }
+
+        max - min
+    }
+
+    #[must_use]
     pub fn evaluate_f64(&self) -> f64 {
         let mut max = 0.;
         let mut min = 0.;
