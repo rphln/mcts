@@ -6,7 +6,12 @@ pub mod game;
 pub mod mcts;
 pub mod pvs;
 
-use std::{cmp::Reverse, fs::File, io::Write, time::Instant};
+use std::{
+    collections::{HashMap, VecDeque},
+    fs::File,
+    io::Write,
+    time::Instant,
+};
 
 use rand::SeedableRng;
 use swift_swallow::{
@@ -17,7 +22,8 @@ use swift_swallow::{
             Block, Damage, DeploymentTactics, EmergencyTactics, FangAndClaw, Grit,
             LockAndLoad, Sidewinder,
         },
-        Mask, Shape,
+        Mask::{Enemy, Friend},
+        Shape,
     },
     character::{Character, CharacterKey, Markers},
     event::{Command, Turn},
@@ -31,27 +37,33 @@ use swift_swallow::{
     },
 };
 
-use crate::{game::Game, mcts::Mcts};
+use crate::{
+    game::Game,
+    mcts::{Mcts, MctsNode},
+};
 
 fn main() -> anyhow::Result<()> {
     let game = Game::new(setup()?, White);
+
+    let now = Instant::now();
 
     if true {
         let mut mcts = Mcts::new(Command::None);
         let mut rng = Rng::seed_from_u64(1);
 
-        for _ in 0..1_048_576 {
+        for it in 0..=1_048_576 {
             let mut game = game.clone();
             let node = mcts.select_and_expand(&mut game, &mut rng);
 
             let reward = game.evaluate_f64();
             mcts.backward(node, reward);
+
+            if usize::is_power_of_two(it) {
+                dbg!(it, now.elapsed(), mcts.len());
+            }
         }
 
-        let mut visits: Vec<usize> = mcts.tree.iter().map(|node| node.visits).collect();
-        visits.sort_by_key(|&n| Reverse(n));
-
-        mcts.gc(visits[10_000]);
+        mcts.gc(1_000);
 
         let root = 0;
         let ply = 0;
@@ -59,10 +71,8 @@ fn main() -> anyhow::Result<()> {
         let mut file = File::create("public_html/tree.tsv")?;
         visit_and_write(root, root, ply, &mcts, &mut file);
     } else {
-        let now = Instant::now();
-
-        let mut pv = Default::default();
-        let mut history = Default::default();
+        let mut pv = VecDeque::default();
+        let mut history = HashMap::default();
 
         for depth in 0.. {
             let score = pvs::search(depth, &mut pv, &mut history, &game);
@@ -121,84 +131,84 @@ fn setup() -> anyhow::Result<World> {
     };
 
     // Vanguard
-    let wv = character(White, Position { y: 5, x: 0 }, 768, 12, 700);
-    let bv = character(Black, Position { y: 5, x: 12 }, 768, 12, 700);
+    let wv = character(White, Position::new(0, 5), 80, 12, 7);
+    let bv = character(Black, Position::new(12, 5), 80, 12, 7);
 
     // Onslaught
-    action(wv, 0, Shape::circle(100, 150, Mask::Enemy), Damage { potency: 120 });
-    action(bv, 0, Shape::circle(100, 150, Mask::Enemy), Damage { potency: 120 });
+    action(wv, 0, Shape::circle(1, 1, Enemy), Damage { potency: 9 });
+    action(bv, 0, Shape::circle(1, 1, Enemy), Damage { potency: 9 });
 
     // Unmend
-    action(wv, 12, Shape::circle(200, 650, Mask::Enemy), Damage { potency: 90 });
-    action(bv, 12, Shape::circle(200, 650, Mask::Enemy), Damage { potency: 90 });
+    action(wv, 12, Shape::circle(2, 6, Enemy), Damage { potency: 8 });
+    action(bv, 12, Shape::circle(2, 6, Enemy), Damage { potency: 8 });
 
     // Grit
     action(
         wv,
         24,
         Shape::Implicit,
-        Grit { potency: 160, area: Shape::circle(0, 650, Mask::Enemy) },
+        Grit { potency: 13, area: Shape::circle(0, 6, Enemy) },
     );
     action(
         bv,
         24,
         Shape::Implicit,
-        Grit { potency: 160, area: Shape::circle(0, 650, Mask::Enemy) },
+        Grit { potency: 13, area: Shape::circle(0, 6, Enemy) },
     );
 
     // Fang and Claw
-    action(wv, 36, Shape::circle(100, 150, Mask::Enemy), FangAndClaw);
-    action(bv, 36, Shape::circle(100, 150, Mask::Enemy), FangAndClaw);
+    action(wv, 36, Shape::circle(1, 1, Enemy), FangAndClaw);
+    action(bv, 36, Shape::circle(1, 1, Enemy), FangAndClaw);
 
     // Scholar
-    let ws = character(White, Position { y: 8, x: 0 }, 576, 14, 600);
-    let bs = character(Black, Position { y: 0, x: 12 }, 576, 14, 600);
+    let ws = character(White, Position::new(0, 8), 75, 14, 6);
+    let bs = character(Black, Position::new(12, 0), 75, 14, 6);
 
     // Ruin
-    action(ws, 0, Shape::circle(200, 650, Mask::Enemy), Damage { potency: 120 });
-    action(bs, 0, Shape::circle(200, 650, Mask::Enemy), Damage { potency: 120 });
+    action(ws, 0, Shape::circle(2, 6, Enemy), Damage { potency: 9 });
+    action(bs, 0, Shape::circle(2, 6, Enemy), Damage { potency: 9 });
 
     // Adloquium
-    action(ws, 12, Shape::circle(0, 600, Mask::Friend), Block { potency: 120 });
-    action(bs, 12, Shape::circle(0, 600, Mask::Friend), Block { potency: 120 });
+    action(ws, 12, Shape::circle(0, 6, Friend), Block { potency: 11 });
+    action(bs, 12, Shape::circle(0, 6, Friend), Block { potency: 11 });
 
     // Deployment Tactics
     action(
         ws,
         36,
-        Shape::circle(0, 600, Mask::Friend),
-        DeploymentTactics { area: Shape::circle(0, 300, Mask::Friend) },
+        Shape::circle(0, 6, Friend),
+        DeploymentTactics { area: Shape::circle(0, 3, Friend) },
     );
     action(
         bs,
         36,
-        Shape::circle(0, 600, Mask::Friend),
-        DeploymentTactics { area: Shape::circle(0, 300, Mask::Friend) },
+        Shape::circle(0, 6, Friend),
+        DeploymentTactics { area: Shape::circle(0, 3, Friend) },
     );
 
     // Emergency Tactics
-    action(ws, 36, Shape::circle(0, 600, Mask::Friend), EmergencyTactics);
-    action(bs, 36, Shape::circle(0, 600, Mask::Friend), EmergencyTactics);
+    action(ws, 36, Shape::circle(0, 6, Friend), EmergencyTactics);
+    action(bs, 36, Shape::circle(0, 6, Friend), EmergencyTactics);
 
     // Marksman
-    let wm = character(White, Position { y: 0, x: 0 }, 384, 16, 700);
-    let bm = character(Black, Position { y: 8, x: 12 }, 384, 16, 700);
+    let wm = character(White, Position::new(0, 0), 70, 16, 7);
+    let bm = character(Black, Position::new(12, 8), 70, 16, 7);
 
     // Bloodletter
-    action(wm, 0, Shape::circle(200, 650, Mask::Enemy), Damage { potency: 120 });
-    action(bm, 0, Shape::circle(200, 650, Mask::Enemy), Damage { potency: 120 });
+    action(wm, 0, Shape::circle(2, 6, Enemy), Damage { potency: 9 });
+    action(bm, 0, Shape::circle(2, 6, Enemy), Damage { potency: 9 });
 
     // Sidewinder
-    action(wm, 36, Shape::Implicit, Sidewinder { duration: 36 });
-    action(bm, 36, Shape::Implicit, Sidewinder { duration: 36 });
+    action(wm, 36, Shape::circle(2, 6, Enemy), Sidewinder { duration: 36 });
+    action(bm, 36, Shape::circle(2, 6, Enemy), Sidewinder { duration: 36 });
 
     // Lock and Load
     action(wm, 12, Shape::Implicit, LockAndLoad);
     action(bm, 12, Shape::Implicit, LockAndLoad);
 
     // Iron Jaws
-    action(wm, 24, Shape::circle(200, 650, Mask::Enemy), Damage { potency: 240 });
-    action(bm, 24, Shape::circle(200, 650, Mask::Enemy), Damage { potency: 240 });
+    action(wm, 24, Shape::circle(2, 6, Enemy), Damage { potency: 18 });
+    action(bm, 24, Shape::circle(2, 6, Enemy), Damage { potency: 18 });
 
     let event_bus = rules();
 
@@ -226,10 +236,10 @@ fn visit_and_write(
     if !is_root && matches!(node.mov, Command::None) {
         // Skip empty nodes.
     } else {
-        let label = label(&node.mov);
-        let value = node.visits;
+        let label = label(node);
 
-        let utility = if ply % 2 == 0 { -node.utility } else { node.utility };
+        let value = node.visits;
+        let utility = node.utility;
 
         // Plotly needs the parent of the root to be blank.
         let maybe_parent = if is_root { String::new() } else { parent_ref.to_string() };
@@ -279,10 +289,10 @@ const ACTION: [&str; 24] = [
     "⚫ Iron Jaws",
 ];
 
-fn label(mov: &Command) -> String {
-    match mov {
+fn label(node: &MctsNode) -> String {
+    match node.mov {
         Command::None => "🌳".to_owned(),
-        &Command::Pass { team, can_act, can_move } => {
+        Command::Pass { team, can_act, can_move } => {
             let color = match team {
                 TeamKey::White => "⚪",
                 TeamKey::Black => "⚫",

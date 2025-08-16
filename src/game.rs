@@ -51,7 +51,7 @@ impl Game {
 
         for character in &self.world.characters {
             let health = character.current_effective_health();
-            let score = (512 * health).isqrt();
+            let score = (64 * health).isqrt();
 
             if character.team == self.color {
                 max += score;
@@ -60,7 +60,7 @@ impl Game {
             }
         }
 
-        max - min
+        (64 * max).isqrt() - (64 * min).isqrt()
     }
 
     #[must_use]
@@ -70,7 +70,7 @@ impl Game {
 
         for character in &self.world.characters {
             let health = f64::from(character.current_effective_health());
-            let score = health.sqrt();
+            let score = (64. * health).sqrt();
 
             if character.team == self.color {
                 max += score;
@@ -79,6 +79,6 @@ impl Game {
             }
         }
 
-        max - min
+        (64. * max).sqrt() - (64. * min).sqrt()
     }
 }

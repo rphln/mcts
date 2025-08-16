@@ -1,10 +1,8 @@
 use std::iter::successors;
 
-use rand::Rng;
+use rand::{Rng, seq::SliceRandom};
 
 use crate::game::{Command, Game};
-
-// TODO: <https://gibberblot.github.io/rl-notes/single-agent/reward-shaping.html>
 
 /// An implementation of the Monte Carlo Tree Search algorithm with the
 /// following modifications:
@@ -12,7 +10,7 @@ use crate::game::{Command, Game};
 /// **Soft rewards.** Nodes use continuous reward values instead of binary win
 /// or loss outcomes.
 ///
-/// **Epsilon-greedy selection.** Chooses a random action with probability ε,
+/// **Epsilon-greedy exploration.** Chooses a random action with probability ε,
 /// otherwise selects the most visited node based on average reward.
 ///
 /// **Tree flattening.** The entire tree is stored in a single array, with
@@ -41,6 +39,8 @@ pub struct Mcts {
     pub visits_to_expand: usize,
     /// Discount factor applied to rewards during back-propagation.
     pub discount_factor: f64,
+    /// Epsilon for the epsilon-greedy strategy.
+    pub exploration_rate: f64,
 }
 
 /// A node that stores statistics for one ply in the game.
@@ -78,7 +78,8 @@ impl Mcts {
         Self {
             tree: vec![MctsNode::new(0, root_move)],
             visits_to_expand: 1,
-            discount_factor: 0.95,
+            discount_factor: 0.99,
+            exploration_rate: 0.1,
         }
     }
 
@@ -197,15 +198,20 @@ impl Mcts {
             self.tree[node].head = head;
             self.tree[node].last = last;
 
+            // Avoid move ordering biases in the selection.
+            self.tree[head..last].shuffle(rng);
+
             // Remove the non-decision nodes from the tree.
             //
             // See <https://www.chessprogramming.org/One_Reply_Extensions>.
             if last - head == 1 {
                 self.tree[head].visits = self.tree[node].visits;
+                self.tree[head].utility = -self.tree[node].utility;
             }
         }
 
-        let next = head + epsilon_greedy_policy(&self.tree[head..last], rng);
+        let next = head
+            + epsilon_greedy_policy(&self.tree[head..last], self.exploration_rate, rng);
         game.play(self.tree[next].mov);
 
         self.select_and_expand_node(next, game, rng)
@@ -265,6 +271,7 @@ impl Mcts {
             tree: subtree,
             visits_to_expand: self.visits_to_expand,
             discount_factor: self.discount_factor,
+            exploration_rate: self.exploration_rate,
         }
     }
 
@@ -323,12 +330,19 @@ impl Mcts {
     }
 }
 
-fn epsilon_greedy_policy(tree: &[MctsNode], rng: &mut impl Rng) -> usize {
+fn epsilon_greedy_policy(
+    tree: &[MctsNode],
+    exploration_rate: f64,
+    rng: &mut impl Rng,
+) -> usize {
+    assert!(!tree.is_empty(), "Tree must be non-empty.");
+
+    // Avoid calling the random number generator if we don't have to.
     if tree.len() == 1 {
         return 0;
     }
 
-    if rng.random_bool(0.1) {
+    if rng.random_bool(exploration_rate) {
         return rng.random_range(0..tree.len());
     }
 
@@ -336,7 +350,7 @@ fn epsilon_greedy_policy(tree: &[MctsNode], rng: &mut impl Rng) -> usize {
     let mut best_value = f64::NEG_INFINITY;
 
     for (index, node) in tree.iter().enumerate() {
-        if node.visits < 1 {
+        if node.visits == 0 {
             return index;
         }
 
