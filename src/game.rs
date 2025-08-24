@@ -30,7 +30,7 @@ impl Game {
     #[must_use]
     pub fn moves(&self) -> Vec<Command> {
         if self.world.active_team() != self.color {
-            return vec![Command::None];
+            return vec![Command::None { team: self.color }];
         }
 
         let rules = game();

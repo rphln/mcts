@@ -4,14 +4,8 @@
 
 pub mod game;
 pub mod mcts;
-pub mod pvs;
 
-use std::{
-    collections::{HashMap, VecDeque},
-    fs::File,
-    io::Write,
-    time::Instant,
-};
+use std::{fs::File, io::Write, time::Instant};
 
 use rand::SeedableRng;
 use swift_swallow::{
@@ -47,37 +41,43 @@ fn main() -> anyhow::Result<()> {
 
     let now = Instant::now();
 
-    if true {
-        let mut mcts = Mcts::new(Command::None);
-        let mut rng = Rng::seed_from_u64(1);
+    let mut mcts = Mcts::new(Command::None { team: Black });
+    let mut rng = Rng::seed_from_u64(1);
 
-        for it in 0..=1_048_576 {
-            let mut game = game.clone();
-            let node = mcts.select_and_expand(&mut game, &mut rng);
+    for it in 1..=16 * 1_048_576 {
+        let mut game = game.clone();
+        let node = mcts.select_and_expand(&mut game, &mut rng);
 
-            let reward = game.evaluate_f64();
-            mcts.backward(node, reward);
+        let reward = game.evaluate_f64();
+        mcts.backward(node, reward);
 
-            if usize::is_power_of_two(it) {
-                dbg!(it, now.elapsed(), mcts.len());
-            }
+        if usize::is_power_of_two(it) {
+            dbg!(it, now.elapsed(), mcts.len());
+        }
+    }
+
+    let mut file = File::create("public_html/tree.tsv")?;
+    visit_and_write(&mcts, &mut file)?;
+
+    Ok(())
+}
+
+fn visit_and_write(mcts: &Mcts, writer: &mut impl Write) -> std::io::Result<()> {
+    writeln!(writer, "id	parent	label	visits	utility")?;
+
+    for (id, node) in mcts.tree.iter().enumerate() {
+        let visits = node.visits;
+        let utility = node.utility;
+
+        if visits < 16 * 256 {
+            continue;
         }
 
-        mcts.gc(1_000);
+        let label = label(node);
 
-        let root = 0;
-        let ply = 0;
-
-        let mut file = File::create("public_html/tree.tsv")?;
-        visit_and_write(root, root, ply, &mcts, &mut file);
-    } else {
-        let mut pv = VecDeque::default();
-        let mut history = HashMap::default();
-
-        for depth in 0.. {
-            let score = pvs::search(depth, &mut pv, &mut history, &game);
-            dbg!(depth, now.elapsed(), score, &pv);
-        }
+        let parent_id =
+            if node.is_root() { String::new() } else { node.parent.to_string() };
+        writeln!(writer, "{id}	{parent_id}	{label}	{visits}	{utility:.3}")?;
     }
 
     Ok(())
@@ -218,42 +218,6 @@ fn setup() -> anyhow::Result<World> {
     Ok(world)
 }
 
-fn visit_and_write(
-    node_ref: usize,
-    mut parent_ref: usize,
-    ply: usize,
-    mcts: &Mcts,
-    writer: &mut impl Write,
-) {
-    let is_root = node_ref == parent_ref;
-
-    if is_root {
-        let _ = writeln!(writer, "id	parent	label	value	utility");
-    }
-
-    let node = &mcts.tree[node_ref];
-
-    if !is_root && matches!(node.mov, Command::None) {
-        // Skip empty nodes.
-    } else {
-        let label = label(node);
-
-        let value = node.visits;
-        let utility = node.utility;
-
-        // Plotly needs the parent of the root to be blank.
-        let maybe_parent = if is_root { String::new() } else { parent_ref.to_string() };
-        let _ =
-            writeln!(writer, "{node_ref}	{maybe_parent}	{label}	{value}	{utility}",);
-
-        parent_ref = node_ref;
-    }
-
-    for child_ref in node.head..node.last {
-        visit_and_write(child_ref, parent_ref, ply + 1, mcts, writer);
-    }
-}
-
 const CHARACTER: [&str; 6] = [
     "⚪ Vanguard",
     "⚫ Vanguard",
@@ -291,7 +255,10 @@ const ACTION: [&str; 24] = [
 
 fn label(node: &MctsNode) -> String {
     match node.mov {
-        Command::None => "🌳".to_owned(),
+        Command::None { team } => match team {
+            TeamKey::White => "⚪".to_owned(),
+            TeamKey::Black => "⚫".to_owned(),
+        },
         Command::Pass { team, can_act, can_move } => {
             let color = match team {
                 TeamKey::White => "⚪",
@@ -310,16 +277,16 @@ fn label(node: &MctsNode) -> String {
         }
         Command::Movement { character, destination } => {
             format!(
-                "{name} → ⟨{x}, {y}⟩",
-                name = CHARACTER[character.0],
+                "{label} → ⟨{x}, {y}⟩",
+                label = CHARACTER[character.0],
                 x = destination.x,
                 y = destination.y,
             )
         }
         Command::Action { action, destination } => {
             format!(
-                "{name} → ⟨{x}, {y}⟩",
-                name = ACTION[action.0],
+                "{label} → ⟨{x}, {y}⟩",
+                label = ACTION[action.0],
                 x = destination.x,
                 y = destination.y,
             )

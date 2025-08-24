@@ -37,26 +37,24 @@ pub struct Mcts {
     pub tree: Vec<MctsNode>,
     /// See <https://stackoverflow.com/a/35666246>.
     pub visits_to_expand: usize,
-    /// Discount factor applied to rewards during back-propagation.
-    pub discount_factor: f64,
-    /// Epsilon for the epsilon-greedy strategy.
+    /// ε for the ε-greedy policy.
     pub exploration_rate: f64,
 }
 
-/// A node that stores statistics for one ply in the game.
+/// Statistics for a single ply in the game tree.
 #[derive(Clone, Debug)]
 pub struct MctsNode {
-    /// The move used to reach this node.
+    /// Move used to reach this node.
     pub mov: Command,
-    /// Number of visits to this node.
+    /// Number of visits.
     pub visits: usize,
-    /// Expected reward from this node.
+    /// Estimated reward.
     pub utility: f64,
-    /// Index of the parent node; used for back-propagation of rewards.
+    /// Parent index.
     pub parent: usize,
-    /// Index of the first child node.
+    /// First child index (inclusive).
     pub head: usize,
-    /// Index of the last child node.
+    /// Last child index (exclusive).
     pub last: usize,
 }
 
@@ -66,9 +64,24 @@ impl MctsNode {
     fn new(parent: usize, mov: Command) -> Self {
         Self { mov, visits: 0, utility: 0., parent, head: 0, last: 0 }
     }
+
+    /// Returns whether this node is the root node.
+    #[must_use]
+    pub fn is_root(&self) -> bool {
+        self.parent == Mcts::SENTINEL
+    }
+
+    /// Returns whether this node is a leaf.
+    #[must_use]
+    pub fn is_leaf(&self) -> bool {
+        self.head == self.last
+    }
 }
 
 impl Mcts {
+    /// Sentinel for the root's parent.
+    const SENTINEL: usize = usize::MAX;
+
     /// Creates a new Monte Carlo Tree Search instance.
     ///
     /// The `root_move` is an arbitrary move that represents the root of the
@@ -76,9 +89,8 @@ impl Mcts {
     #[must_use]
     pub fn new(root_move: Command) -> Self {
         Self {
-            tree: vec![MctsNode::new(0, root_move)],
+            tree: vec![MctsNode::new(Self::SENTINEL, root_move)],
             visits_to_expand: 1,
-            discount_factor: 0.99,
             exploration_rate: 0.1,
         }
     }
@@ -111,14 +123,9 @@ impl Mcts {
         })
     }
 
-    /// Returns an iterator over the sequence of ancestors of a node.
-    pub fn ancestors(&self, first: usize) -> impl Iterator<Item = &MctsNode> {
-        let indices = successors(Some(first), |&node| {
-            let parent = self.tree[node].parent;
-            if parent == node { None } else { Some(parent) }
-        });
-
-        indices.map(|node| &self.tree[node])
+    /// Returns an iterator over the ancestors of `node`, starting at `node`.
+    pub fn ancestors(&self, node: usize) -> impl Iterator<Item = &MctsNode> {
+        successors(self.tree.get(node), |node| self.tree.get(node.parent))
     }
 
     /// Traverses the tree from the root and selects the next leaf node to
@@ -198,10 +205,10 @@ impl Mcts {
             self.tree[node].head = head;
             self.tree[node].last = last;
 
-            // Avoid move ordering biases in the selection.
+            // Shuffle to reduce ordering bias during selection.
             self.tree[head..last].shuffle(rng);
 
-            // Remove the non-decision nodes from the tree.
+            // Advance through the non-decision nodes.
             //
             // See <https://www.chessprogramming.org/One_Reply_Extensions>.
             if last - head == 1 {
@@ -210,8 +217,17 @@ impl Mcts {
             }
         }
 
-        let next = head
-            + epsilon_greedy_policy(&self.tree[head..last], self.exploration_rate, rng);
+        let exploration_rate = {
+            let k = (last - head) as f64;
+            let t = self.tree[node].visits as f64;
+
+            // See <https://christopherkang.me/assets/papers/Kang_2021Wi_Bandits.pdf>.
+            // See <https://panageas.github.io/_pages/L09_LectureNotes.pdf>.
+            f64::cbrt(k * f64::ln(t) / t)
+        };
+
+        let next =
+            head + epsilon_greedy_policy(&self.tree[head..last], exploration_rate, rng);
         game.play(self.tree[next].mov);
 
         self.select_and_expand_node(next, game, rng)
@@ -221,6 +237,10 @@ impl Mcts {
     ///
     /// Rewards must be provided from the perspective of the side to move.
     pub fn backward(&mut self, node: usize, reward: f64) {
+        if node == Self::SENTINEL {
+            return;
+        }
+
         // See <https://www.chessprogramming.org/Negamax>.
         let reward = -reward;
 
@@ -228,11 +248,7 @@ impl Mcts {
         self.tree[node].utility +=
             (reward - self.tree[node].utility) / (self.tree[node].visits as f64);
 
-        if self.tree[node].parent == node {
-            return;
-        }
-
-        self.backward(self.tree[node].parent, self.discount_factor * reward);
+        self.backward(self.tree[node].parent, reward);
     }
 
     /// Returns a copy of the subtree rooted at the given node.
@@ -270,7 +286,6 @@ impl Mcts {
         Self {
             tree: subtree,
             visits_to_expand: self.visits_to_expand,
-            discount_factor: self.discount_factor,
             exploration_rate: self.exploration_rate,
         }
     }
@@ -331,34 +346,31 @@ impl Mcts {
 }
 
 fn epsilon_greedy_policy(
-    tree: &[MctsNode],
+    nodes: &[MctsNode],
     exploration_rate: f64,
     rng: &mut impl Rng,
 ) -> usize {
-    assert!(!tree.is_empty(), "Tree must be non-empty.");
+    assert!(!nodes.is_empty(), "`nodes` must be non-empty.");
 
-    // Avoid calling the random number generator if we don't have to.
-    if tree.len() == 1 {
+    if nodes.len() == 1 {
         return 0;
     }
 
-    if rng.random_bool(exploration_rate) {
-        return rng.random_range(0..tree.len());
+    if exploration_rate >= 1. || rng.random_bool(exploration_rate) {
+        return rng.random_range(0..nodes.len());
     }
 
     let mut best_index = 0;
     let mut best_value = f64::NEG_INFINITY;
 
-    for (index, node) in tree.iter().enumerate() {
+    for (index, node) in nodes.iter().enumerate() {
         if node.visits == 0 {
             return index;
         }
 
-        let value = node.utility;
-
-        if value > best_value || (value == best_value && rng.random()) {
+        if node.utility > best_value {
             best_index = index;
-            best_value = value;
+            best_value = node.utility;
         }
     }
 
