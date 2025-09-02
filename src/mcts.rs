@@ -37,8 +37,12 @@ pub struct Mcts {
     pub tree: Vec<MctsNode>,
     /// See <https://stackoverflow.com/a/35666246>.
     pub visits_to_expand: usize,
-    /// ε for the ε-greedy policy.
+    /// Exploration rate (ε) for the ε-greedy policy.
     pub exploration_rate: f64,
+    /// Discount factor (γ) for the reward backprogation.
+    pub discount_factor: f64,
+    /// Learning rate (α) for the temporal difference update.
+    pub learning_rate: f64,
 }
 
 /// Statistics for a single ply in the game tree.
@@ -49,7 +53,7 @@ pub struct MctsNode {
     /// Number of visits.
     pub visits: usize,
     /// Estimated reward.
-    pub utility: f64,
+    pub value: f64,
     /// Parent index.
     pub parent: usize,
     /// First child index (inclusive).
@@ -62,7 +66,7 @@ impl MctsNode {
     /// Creates a new node with default statistics.
     #[must_use]
     fn new(parent: usize, mov: Command) -> Self {
-        Self { mov, visits: 0, utility: 0., parent, head: 0, last: 0 }
+        Self { mov, visits: 0, value: f64::NAN, parent, head: 0, last: 0 }
     }
 
     /// Returns whether this node is the root node.
@@ -92,6 +96,8 @@ impl Mcts {
             tree: vec![MctsNode::new(Self::SENTINEL, root_move)],
             visits_to_expand: 1,
             exploration_rate: 0.1,
+            learning_rate: 0.1,
+            discount_factor: 0.99,
         }
     }
 
@@ -213,21 +219,12 @@ impl Mcts {
             // See <https://www.chessprogramming.org/One_Reply_Extensions>.
             if last - head == 1 {
                 self.tree[head].visits = self.tree[node].visits;
-                self.tree[head].utility = -self.tree[node].utility;
+                self.tree[head].value = -self.tree[node].value / self.discount_factor;
             }
         }
 
-        let exploration_rate = {
-            let k = (last - head) as f64;
-            let t = self.tree[node].visits as f64;
-
-            // See <https://christopherkang.me/assets/papers/Kang_2021Wi_Bandits.pdf>.
-            // See <https://panageas.github.io/_pages/L09_LectureNotes.pdf>.
-            f64::cbrt(k * f64::ln(t) / t)
-        };
-
-        let next =
-            head + epsilon_greedy_policy(&self.tree[head..last], exploration_rate, rng);
+        let next = head
+            + epsilon_greedy_policy(&self.tree[head..last], self.exploration_rate, rng);
         game.play(self.tree[next].mov);
 
         self.select_and_expand_node(next, game, rng)
@@ -235,20 +232,44 @@ impl Mcts {
 
     /// Back-propagates the reward from a leaf node up to the root.
     ///
-    /// Rewards must be provided from the perspective of the side to move.
-    pub fn backward(&mut self, node: usize, reward: f64) {
+    /// Rewards must be provided from the perspective of the side moving at the
+    /// leaf.
+    pub fn backward(&mut self, node: usize, value: f64) {
+        // See <https://www.chessprogramming.org/Negamax>.
+        let value = -value;
+
+        // See <https://gibberblot.github.io/rl-notes/single-agent/reward-shaping.html#q-value-initialisation>.
+        self.tree[node].value = value;
+        self.tree[node].visits += 1;
+
+        self.backward_q_learning(self.tree[node].parent);
+    }
+
+    pub fn backward_q_learning(&mut self, node: usize) {
         if node == Self::SENTINEL {
             return;
         }
 
-        // See <https://www.chessprogramming.org/Negamax>.
-        let reward = -reward;
+        let value = {
+            let head = self.tree[node].head;
+            let last = self.tree[node].last;
+
+            let value = self.tree[head..last]
+                .iter()
+                .filter(|node| node.visits > 0)
+                .map(|node| node.value)
+                .reduce(f64::max)
+                .expect("`node` should not be a leaf");
+            -value
+        };
+
+        let reward = 0.; // No intermediate rewards for now.
+        let target = reward + self.discount_factor * value;
 
         self.tree[node].visits += 1;
-        self.tree[node].utility +=
-            (reward - self.tree[node].utility) / (self.tree[node].visits as f64);
+        self.tree[node].value += self.learning_rate * (target - self.tree[node].value);
 
-        self.backward(self.tree[node].parent, reward);
+        self.backward_q_learning(self.tree[node].parent);
     }
 
     /// Returns a copy of the subtree rooted at the given node.
@@ -287,6 +308,8 @@ impl Mcts {
             tree: subtree,
             visits_to_expand: self.visits_to_expand,
             exploration_rate: self.exploration_rate,
+            learning_rate: self.learning_rate,
+            discount_factor: self.discount_factor,
         }
     }
 
@@ -364,13 +387,13 @@ fn epsilon_greedy_policy(
     let mut best_value = f64::NEG_INFINITY;
 
     for (index, node) in nodes.iter().enumerate() {
-        if node.visits == 0 {
+        if node.visits < 1 {
             return index;
         }
 
-        if node.utility > best_value {
+        if node.value > best_value {
             best_index = index;
-            best_value = node.utility;
+            best_value = node.value;
         }
     }
 

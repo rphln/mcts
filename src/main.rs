@@ -44,7 +44,9 @@ fn main() -> anyhow::Result<()> {
     let mut mcts = Mcts::new(Command::None { team: Black });
     let mut rng = Rng::seed_from_u64(1);
 
-    for it in 1..=16 * 1_048_576 {
+    const N: usize = 8 * 1024 * 1024;
+
+    for it in 1..=N {
         let mut game = game.clone();
         let node = mcts.select_and_expand(&mut game, &mut rng);
 
@@ -57,19 +59,23 @@ fn main() -> anyhow::Result<()> {
     }
 
     let mut file = File::create("public_html/tree.tsv")?;
-    visit_and_write(&mcts, &mut file)?;
+    visit_and_write(&mcts, N / 1024, &mut file)?;
 
     Ok(())
 }
 
-fn visit_and_write(mcts: &Mcts, writer: &mut impl Write) -> std::io::Result<()> {
+fn visit_and_write(
+    mcts: &Mcts,
+    min_visits: usize,
+    writer: &mut impl Write,
+) -> std::io::Result<()> {
     writeln!(writer, "id	parent	label	visits	utility")?;
 
     for (id, node) in mcts.tree.iter().enumerate() {
         let visits = node.visits;
-        let utility = node.utility;
+        let utility = node.value;
 
-        if visits < 16 * 256 {
+        if visits < min_visits {
             continue;
         }
 
