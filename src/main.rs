@@ -16,8 +16,7 @@ use swift_swallow::{
             Block, Damage, DeploymentTactics, EmergencyTactics, FangAndClaw, Grit,
             LockAndLoad, Sidewinder,
         },
-        Mask::{Enemy, Friend},
-        Shape,
+        enemy_in_range, friend_in_range, self_only,
     },
     character::{Character, CharacterKey, Markers},
     event::{Command, Turn},
@@ -122,14 +121,15 @@ fn setup() -> anyhow::Result<World> {
         };
 
         world.characters.push(character);
-        world.map.insert(position, Node::Occupied { team });
+        world.map.insert(position, Node::Occupied { team, character: key });
 
         key
     };
 
-    let mut action = |character, cooldown, range, effect| {
+    let mut action = |character, cooldown, conditions, effect| {
         let key = ActionKey(world.actions.len());
-        let action = Action { key, character, cooldown, ready_at: 0, effect, range };
+        let action =
+            Action { key, character, cooldown, ready_at: 0, conditions, effect };
 
         world.actions.push(action);
 
@@ -141,80 +141,70 @@ fn setup() -> anyhow::Result<World> {
     let bv = character(Black, Position::new(12, 5), 80, 12, 7);
 
     // Onslaught
-    action(wv, 0, Shape::circle(1, 1, Enemy), Damage { potency: 9 });
-    action(bv, 0, Shape::circle(1, 1, Enemy), Damage { potency: 9 });
+    action(wv, 0, enemy_in_range(1, 2), Damage { potency: 9 });
+    action(bv, 0, enemy_in_range(1, 2), Damage { potency: 9 });
 
     // Unmend
-    action(wv, 12, Shape::circle(2, 6, Enemy), Damage { potency: 8 });
-    action(bv, 12, Shape::circle(2, 6, Enemy), Damage { potency: 8 });
+    action(wv, 12, enemy_in_range(2, 7), Damage { potency: 8 });
+    action(bv, 12, enemy_in_range(2, 7), Damage { potency: 8 });
 
     // Grit
-    action(
-        wv,
-        24,
-        Shape::Implicit,
-        Grit { potency: 13, area: Shape::circle(0, 6, Enemy) },
-    );
-    action(
-        bv,
-        24,
-        Shape::Implicit,
-        Grit { potency: 13, area: Shape::circle(0, 6, Enemy) },
-    );
+    action(wv, 24, self_only(), Grit { potency: 13, area: enemy_in_range(0, 7) });
+    action(bv, 24, self_only(), Grit { potency: 13, area: enemy_in_range(0, 7) });
 
     // Fang and Claw
-    action(wv, 36, Shape::circle(1, 1, Enemy), FangAndClaw);
-    action(bv, 36, Shape::circle(1, 1, Enemy), FangAndClaw);
+    action(wv, 36, enemy_in_range(1, 2), FangAndClaw);
+    action(bv, 36, enemy_in_range(1, 2), FangAndClaw);
 
     // Scholar
     let ws = character(White, Position::new(0, 8), 75, 14, 6);
     let bs = character(Black, Position::new(12, 0), 75, 14, 6);
 
     // Ruin
-    action(ws, 0, Shape::circle(2, 6, Enemy), Damage { potency: 9 });
-    action(bs, 0, Shape::circle(2, 6, Enemy), Damage { potency: 9 });
+    action(ws, 0, enemy_in_range(2, 7), Damage { potency: 9 });
+    action(bs, 0, enemy_in_range(2, 7), Damage { potency: 9 });
 
     // Adloquium
-    action(ws, 12, Shape::circle(0, 6, Friend), Block { potency: 11 });
-    action(bs, 12, Shape::circle(0, 6, Friend), Block { potency: 11 });
+    action(ws, 12, friend_in_range(0, 7), Block { potency: 11 });
+    action(bs, 12, friend_in_range(0, 7), Block { potency: 11 });
 
     // Deployment Tactics
     action(
         ws,
         36,
-        Shape::circle(0, 6, Friend),
-        DeploymentTactics { area: Shape::circle(0, 3, Friend) },
+        friend_in_range(0, 7),
+        DeploymentTactics { area: friend_in_range(0, 4) },
     );
     action(
         bs,
         36,
-        Shape::circle(0, 6, Friend),
-        DeploymentTactics { area: Shape::circle(0, 3, Friend) },
+        friend_in_range(0, 7),
+        DeploymentTactics { area: friend_in_range(0, 4) },
     );
 
     // Emergency Tactics
-    action(ws, 36, Shape::circle(0, 6, Friend), EmergencyTactics);
-    action(bs, 36, Shape::circle(0, 6, Friend), EmergencyTactics);
+    action(ws, 36, friend_in_range(0, 7), EmergencyTactics);
+    action(bs, 36, friend_in_range(0, 7), EmergencyTactics);
 
     // Marksman
     let wm = character(White, Position::new(0, 0), 70, 16, 7);
     let bm = character(Black, Position::new(12, 8), 70, 16, 7);
 
     // Bloodletter
-    action(wm, 0, Shape::circle(2, 6, Enemy), Damage { potency: 9 });
-    action(bm, 0, Shape::circle(2, 6, Enemy), Damage { potency: 9 });
+    action(wm, 0, enemy_in_range(2, 7), Damage { potency: 9 });
+    action(bm, 0, enemy_in_range(2, 7), Damage { potency: 9 });
 
     // Sidewinder
-    action(wm, 36, Shape::circle(2, 6, Enemy), Sidewinder { duration: 36 });
-    action(bm, 36, Shape::circle(2, 6, Enemy), Sidewinder { duration: 36 });
+    action(wm, 36, enemy_in_range(2, 7), Sidewinder { duration: 36 });
+    action(bm, 36, enemy_in_range(2, 7), Sidewinder { duration: 36 });
 
     // Lock and Load
-    action(wm, 12, Shape::Implicit, LockAndLoad);
-    action(bm, 12, Shape::Implicit, LockAndLoad);
+    action(wm, 12, self_only(), LockAndLoad);
+    action(bm, 12, self_only(), LockAndLoad);
 
     // Iron Jaws
-    action(wm, 24, Shape::circle(2, 6, Enemy), Damage { potency: 18 });
-    action(bm, 24, Shape::circle(2, 6, Enemy), Damage { potency: 18 });
+    action(wm, 24, enemy_in_range(2, 7), Damage { potency: 18 });
+    action(bm, 24, enemy_in_range(2, 7), Damage { potency: 18 });
 
     let event_bus = rules();
 
