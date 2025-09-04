@@ -96,8 +96,8 @@ impl Mcts {
             tree: vec![MctsNode::new(Self::SENTINEL, root_move)],
             visits_to_expand: 1,
             exploration_rate: 0.1,
-            learning_rate: 0.1,
-            discount_factor: 0.99,
+            learning_rate: 0.05,
+            discount_factor: 0.999,
         }
     }
 
@@ -125,7 +125,12 @@ impl Mcts {
     /// Returns an iterator over the sequence of best moves found so far.
     pub fn principal_variation(&self) -> impl Iterator<Item = &MctsNode> {
         successors(self.tree.first(), |parent| {
-            self.tree[parent.head..parent.last].iter().max_by_key(|node| node.visits)
+            self.tree[parent.head..parent.last]
+                .iter()
+                .filter(|node| node.visits > 0)
+                .max_by(|left, right| {
+                    f64::partial_cmp(&left.value, &right.value).unwrap()
+                })
         })
     }
 
@@ -227,6 +232,8 @@ impl Mcts {
             + epsilon_greedy_policy(&self.tree[head..last], self.exploration_rate, rng);
         game.play(self.tree[next].mov);
 
+        assert!(next > node);
+
         self.select_and_expand_node(next, game, rng)
     }
 
@@ -277,7 +284,7 @@ impl Mcts {
     /// Behavior is undefined if the given node is not in the tree.
     #[must_use]
     pub fn clone_subtree(&self, root: &MctsNode) -> Self {
-        let mut subtree = vec![MctsNode { parent: 0, ..root.clone() }];
+        let mut subtree = vec![MctsNode { parent: Self::SENTINEL, ..root.clone() }];
 
         for parent in 0.. {
             let Some(node) = subtree.get(parent) else {

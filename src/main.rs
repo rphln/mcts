@@ -4,288 +4,225 @@
 
 pub mod game;
 pub mod mcts;
+pub mod pvs;
 
-use std::{fs::File, io::Write, time::Instant};
+use std::{collections::VecDeque, sync::mpsc, thread, time::Instant};
 
 use rand::SeedableRng;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rustc_hash::FxHashMap;
 use swift_swallow::{
     Rng,
-    action::{
-        Action, ActionKey,
-        Effect::{
-            Block, Damage, DeploymentTactics, EmergencyTactics, FangAndClaw, Grit,
-            LockAndLoad, Sidewinder,
-        },
-        enemy_in_range, friend_in_range, self_only,
-    },
-    character::{Character, CharacterKey, Markers},
-    event::{Command, Turn},
-    position::Position,
-    rules::rules,
-    subscribe::Subscribe,
-    team::TeamKey::{self, Black, White},
-    world::{
-        Node::{self, Closed as X, Open as O},
-        World,
-    },
+    event::Command,
+    examples::setup,
+    team::TeamKey::{self, White},
 };
 
-use crate::{
-    game::Game,
-    mcts::{Mcts, MctsNode},
-};
+use crate::{game::Game, mcts::Mcts, pvs::search};
 
-fn main() -> anyhow::Result<()> {
-    let game = Game::new(setup()?, White);
+fn main() {
+    const MS: u128 = 1_000_000;
+
+    // region: Configuration.
+
+    let engine_a = search_mcts;
+    let engine_b = search_mcts;
+
+    let p_0 = elo(0.); // H₀
+    let p_1 = elo(10.); // H₁
+
+    let ns_per_move = MS * 10;
+
+    let alpha = 0.05;
+    let beta = 0.05;
+
+    // endregion
+    // region: Generate games.
+
+    let tasks = (0..65536).into_par_iter().flat_map(move |seed| {
+        let is_white_win =
+            run_match(seed, ns_per_move, engine_a, engine_b) == TeamKey::White;
+
+        let is_black_win =
+            run_match(seed, ns_per_move, engine_b, engine_a) == TeamKey::Black;
+
+        [is_white_win, is_black_win]
+    });
+
+    // endregion
+    // region: SPRT.
 
     let now = Instant::now();
 
-    let mut mcts = Mcts::new(Command::None { team: Black });
-    let mut rng = Rng::seed_from_u64(1);
+    let log_alpha = f64::ln(beta / (1. - alpha));
+    let log_beta = f64::ln((1. - beta) / alpha);
 
-    const N: usize = 8 * 1024 * 1024;
+    let mut llr = 0.;
 
-    for it in 1..=N {
+    for (n_iter, is_win) in into_seq_iter(tasks).enumerate() {
+        if is_win {
+            llr += f64::ln(p_1 / p_0);
+        } else {
+            llr += f64::ln((1. - p_1) / (1. - p_0));
+        }
+
+        let time = now.elapsed();
+        println!("n_iter = {n_iter:>4} log_lr = {llr:>6.3} time = {time:.3?}");
+
+        if llr <= log_alpha {
+            println!("Accept H₀",);
+            break;
+        } else if llr >= log_beta {
+            println!("Accept H₁",);
+            break;
+        }
+    }
+
+    // endregion
+}
+
+fn run_match(
+    seed: u64,
+    ns_per_move: u128,
+    mut search_white: impl FnMut(&Game, Command, u128) -> Command,
+    mut search_black: impl FnMut(&Game, Command, u128) -> Command,
+) -> TeamKey {
+    let mut game = Game::new(setup(seed).unwrap(), White);
+    let mut mov = Command::None { team: TeamKey::Black };
+
+    while !game.is_over() {
+        mov = if game.color == TeamKey::White {
+            search_white(&game, mov, ns_per_move)
+        } else {
+            search_black(&game, mov, ns_per_move)
+        };
+        game.play(mov);
+    }
+    game.world.active_team()
+}
+
+fn elo(rating_diff: f64) -> f64 {
+    1. / (1. + f64::powf(10., -rating_diff / 400.))
+}
+
+// region: Search strategies
+
+fn search_pvs(game: &Game, _previous_move: Command, ns_per_move: u128) -> Command {
+    let legal_moves = game.moves();
+    if legal_moves.len() == 1 {
+        return legal_moves[0];
+    }
+
+    let start_time = thread_time_ns();
+
+    let mut pv = VecDeque::default();
+    let mut history = FxHashMap::default();
+
+    for depth in 1.. {
+        let _score = search(depth, &mut pv, &mut history, game);
+        if thread_time_ns() - start_time >= ns_per_move {
+            break;
+        }
+    }
+
+    pv.pop_front().expect("`best_move` should exist")
+}
+
+fn search_mcts(game: &Game, _previous_move: Command, ns_per_move: u128) -> Command {
+    let legal_moves = game.moves();
+    if legal_moves.len() == 1 {
+        return legal_moves[0];
+    }
+
+    let start_time = thread_time_ns();
+
+    let mut mcts = Mcts::new(Command::None { team: TeamKey::Black });
+    let mut rng = Rng::from_os_rng();
+
+    for it in 1.. {
         let mut game = game.clone();
         let node = mcts.select_and_expand(&mut game, &mut rng);
 
         let reward = game.evaluate_f64();
         mcts.backward(node, reward);
 
-        if usize::is_power_of_two(it) {
-            dbg!(it, now.elapsed(), mcts.len());
+        if it % 1_000 == 0 && thread_time_ns() - start_time >= ns_per_move {
+            break;
         }
     }
 
-    let mut file = File::create("public_html/tree.tsv")?;
-    visit_and_write(&mcts, N / 1024, &mut file)?;
-
-    Ok(())
+    mcts.best_child().map(|node| node.mov).expect("`best_move` should exist")
 }
 
-fn visit_and_write(
-    mcts: &Mcts,
-    min_visits: usize,
-    writer: &mut impl Write,
-) -> std::io::Result<()> {
-    writeln!(writer, "id	parent	label	visits	utility")?;
+fn make_mcts_with_memory() -> impl FnMut(&Game, Command, u128) -> Command {
+    let mut mcts = Mcts::new(Command::None { team: TeamKey::Black });
+    let mut rng = Rng::from_os_rng();
 
-    for (id, node) in mcts.tree.iter().enumerate() {
-        let visits = node.visits;
-        let utility = node.value;
+    move |game: &Game, previous_move: Command, ns_per_move: u128| {
+        let start_time = thread_time_ns();
 
-        if visits < min_visits {
-            continue;
+        if let Some(prev_node) =
+            mcts.children().iter().find(|node| node.mov == previous_move)
+        {
+            mcts = mcts.clone_subtree(prev_node);
+        } else {
+            mcts = Mcts::new(previous_move);
         }
 
-        let label = label(node);
+        for it in 1.. {
+            let mut game = game.clone();
+            let node = mcts.select_and_expand(&mut game, &mut rng);
 
-        let parent_id =
-            if node.is_root() { String::new() } else { node.parent.to_string() };
-        writeln!(writer, "{id}	{parent_id}	{label}	{visits}	{utility:.3}")?;
+            let reward = game.evaluate_f64();
+            mcts.backward(node, reward);
+
+            if it % 1_000 == 0 && thread_time_ns() - start_time >= ns_per_move {
+                break;
+            }
+        }
+
+        let best_child = mcts.best_child().expect("`best_child` should exist");
+        let best_mov = best_child.mov;
+        mcts = mcts.clone_subtree(best_child);
+        best_mov
     }
-
-    Ok(())
 }
 
-fn setup() -> anyhow::Result<World> {
-    const MAP: [[Node; 13]; 9] = [
-        [O, O, O, O, O, O, X, O, O, O, O, O, O],
-        [O, O, O, X, X, O, X, O, X, X, X, X, O],
-        [O, X, O, O, O, O, O, O, O, O, O, O, O],
-        [O, X, X, O, X, X, O, O, O, O, O, O, O],
-        [O, O, O, O, O, O, O, O, O, O, O, O, O],
-        [O, O, O, O, O, O, O, X, X, O, X, X, O],
-        [O, O, O, O, O, O, O, O, O, O, O, X, O],
-        [O, X, X, X, X, O, X, O, X, X, O, O, O],
-        [O, O, O, O, O, O, X, O, O, O, O, O, O],
-    ];
+// endregion
 
-    let mut world = World::new(0, MAP);
+// region: Helpers.
 
-    let mut character = |team, position, health, cooldown, movement| {
-        let key = CharacterKey(world.characters.len());
-        let character = Character {
-            key,
-            team,
-            health,
-            block: 0,
-            damage: 0,
-            movement,
-            position,
-            cooldown,
-            ready_at: 0,
-            can_act: false,
-            can_move: false,
-            markers: Markers::default(),
-        };
+/// Returns the current CPU time in nanoseconds.
+///
+/// # Panics
+///
+/// Panics if the system call to get the CPU time fails.
+fn thread_time_ns() -> u128 {
+    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
 
-        world.characters.push(character);
-        world.map.insert(position, Node::Occupied { team, character: key });
-
-        key
+    unsafe {
+        assert_ne!(
+            libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &raw mut time),
+            -1,
+            "Failed to get CPU time"
+        );
     };
 
-    let mut action = |character, cooldown, conditions, effect| {
-        let key = ActionKey(world.actions.len());
-        let action =
-            Action { key, character, cooldown, ready_at: 0, conditions, effect };
+    let tv_sec = u128::try_from(time.tv_sec).unwrap();
+    let tv_nsec = u128::try_from(time.tv_nsec).unwrap();
 
-        world.actions.push(action);
-
-        key
-    };
-
-    // Vanguard
-    let wv = character(White, Position::new(0, 5), 80, 12, 7);
-    let bv = character(Black, Position::new(12, 5), 80, 12, 7);
-
-    // Onslaught
-    action(wv, 0, enemy_in_range(1, 2), Damage { potency: 9 });
-    action(bv, 0, enemy_in_range(1, 2), Damage { potency: 9 });
-
-    // Unmend
-    action(wv, 12, enemy_in_range(2, 7), Damage { potency: 8 });
-    action(bv, 12, enemy_in_range(2, 7), Damage { potency: 8 });
-
-    // Grit
-    action(wv, 24, self_only(), Grit { potency: 13, area: enemy_in_range(0, 7) });
-    action(bv, 24, self_only(), Grit { potency: 13, area: enemy_in_range(0, 7) });
-
-    // Fang and Claw
-    action(wv, 36, enemy_in_range(1, 2), FangAndClaw);
-    action(bv, 36, enemy_in_range(1, 2), FangAndClaw);
-
-    // Scholar
-    let ws = character(White, Position::new(0, 8), 75, 14, 6);
-    let bs = character(Black, Position::new(12, 0), 75, 14, 6);
-
-    // Ruin
-    action(ws, 0, enemy_in_range(2, 7), Damage { potency: 9 });
-    action(bs, 0, enemy_in_range(2, 7), Damage { potency: 9 });
-
-    // Adloquium
-    action(ws, 12, friend_in_range(0, 7), Block { potency: 11 });
-    action(bs, 12, friend_in_range(0, 7), Block { potency: 11 });
-
-    // Deployment Tactics
-    action(
-        ws,
-        36,
-        friend_in_range(0, 7),
-        DeploymentTactics { area: friend_in_range(0, 4) },
-    );
-    action(
-        bs,
-        36,
-        friend_in_range(0, 7),
-        DeploymentTactics { area: friend_in_range(0, 4) },
-    );
-
-    // Emergency Tactics
-    action(ws, 36, friend_in_range(0, 7), EmergencyTactics);
-    action(bs, 36, friend_in_range(0, 7), EmergencyTactics);
-
-    // Marksman
-    let wm = character(White, Position::new(0, 0), 70, 16, 7);
-    let bm = character(Black, Position::new(12, 8), 70, 16, 7);
-
-    // Bloodletter
-    action(wm, 0, enemy_in_range(2, 7), Damage { potency: 9 });
-    action(bm, 0, enemy_in_range(2, 7), Damage { potency: 9 });
-
-    // Sidewinder
-    action(wm, 36, enemy_in_range(2, 7), Sidewinder { duration: 36 });
-    action(bm, 36, enemy_in_range(2, 7), Sidewinder { duration: 36 });
-
-    // Lock and Load
-    action(wm, 12, self_only(), LockAndLoad);
-    action(bm, 12, self_only(), LockAndLoad);
-
-    // Iron Jaws
-    action(wm, 24, enemy_in_range(2, 7), Damage { potency: 18 });
-    action(bm, 24, enemy_in_range(2, 7), Damage { potency: 18 });
-
-    let event_bus = rules();
-
-    let event = Turn { prevent_default: false };
-    let _ = event_bus.on_turn_start(event, &event_bus, &mut world)?;
-
-    Ok(world)
+    tv_sec * 1_000_000_000 + tv_nsec
 }
 
-const CHARACTER: [&str; 6] = [
-    "⚪ Vanguard",
-    "⚫ Vanguard",
-    "⚪ Scholar",
-    "⚫ Scholar",
-    "⚪ Marksman",
-    "⚫ Marksman",
-];
-const ACTION: [&str; 24] = [
-    "⚪ Onslaught",
-    "⚫ Onslaught",
-    "⚪ Unmend",
-    "⚫ Unmend",
-    "⚪ Grit",
-    "⚫ Grit",
-    "⚪ Fang and Claw",
-    "⚫ Fang and Claw",
-    "⚪ Ruin",
-    "⚫ Ruin",
-    "⚪ Adloquium",
-    "⚫ Adloquium",
-    "⚪ Deployment Tactics",
-    "⚫ Deployment Tactics",
-    "⚪ Emergency Tactics",
-    "⚫ Emergency Tactics",
-    "⚪ Bloodletter",
-    "⚫ Bloodletter",
-    "⚪ Sidewinder",
-    "⚫ Sidewinder",
-    "⚪ Lock and Load",
-    "⚫ Lock and Load",
-    "⚪ Iron Jaws",
-    "⚫ Iron Jaws",
-];
+fn into_seq_iter<P: ParallelIterator + 'static>(
+    par_iter: P,
+) -> impl Iterator<Item = P::Item> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(|| {
+        let _ = par_iter.try_for_each_with(tx, |tx, value| tx.send(value));
+    });
 
-fn label(node: &MctsNode) -> String {
-    match node.mov {
-        Command::None { team } => match team {
-            TeamKey::White => "⚪".to_owned(),
-            TeamKey::Black => "⚫".to_owned(),
-        },
-        Command::Pass { team, can_act, can_move } => {
-            let color = match team {
-                TeamKey::White => "⚪",
-                TeamKey::Black => "⚫",
-            };
-
-            let marker = if can_act && can_move {
-                "‼️"
-            } else if can_act || can_move {
-                "❗"
-            } else {
-                ""
-            };
-
-            format!("{color} Pass {marker}")
-        }
-        Command::Movement { character, destination } => {
-            format!(
-                "{label} → ⟨{x}, {y}⟩",
-                label = CHARACTER[character.0],
-                x = destination.x,
-                y = destination.y,
-            )
-        }
-        Command::Action { action, destination } => {
-            format!(
-                "{label} → ⟨{x}, {y}⟩",
-                label = ACTION[action.0],
-                x = destination.x,
-                y = destination.y,
-            )
-        }
-    }
+    rx.into_iter()
 }
+
+// endregion
