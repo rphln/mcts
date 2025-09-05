@@ -5,6 +5,7 @@
 pub mod game;
 pub mod mcts;
 pub mod pvs;
+pub mod sarsa;
 
 use std::{collections::VecDeque, sync::mpsc, thread, time::Instant};
 
@@ -18,20 +19,19 @@ use swift_swallow::{
     team::TeamKey::{self, White},
 };
 
-use crate::{game::Game, mcts::Mcts, pvs::search};
+use crate::{game::Game, mcts::Mcts, pvs::search, sarsa::Sarsa};
+
+const MS: u128 = 1_000_000;
+const NS_PER_MOVE: u128 = 10 * MS;
 
 fn main() {
-    const MS: u128 = 1_000_000;
-
     // region: Configuration.
 
-    let engine_a = search_mcts;
-    let engine_b = search_mcts;
+    let search_baseline = search_mcts;
+    let search_candidate = search_mcts;
 
-    let p_0 = elo(0.); // H₀
-    let p_1 = elo(10.); // H₁
-
-    let ns_per_move = MS * 10;
+    let p_0 = elo(0.); // H₀: Candidate = Baseline
+    let p_1 = elo(10.); // H₁: Candidate > Baseline
 
     let alpha = 0.05;
     let beta = 0.05;
@@ -39,15 +39,15 @@ fn main() {
     // endregion
     // region: Generate games.
 
-    let tasks = (0..65536).into_par_iter().flat_map(move |seed| {
+    let results = into_seq_iter((0..10_000).into_par_iter().map(move |seed| {
         let is_white_win =
-            run_match(seed, ns_per_move, engine_a, engine_b) == TeamKey::White;
+            run_match(search_candidate, search_baseline, seed) == TeamKey::White;
 
         let is_black_win =
-            run_match(seed, ns_per_move, engine_b, engine_a) == TeamKey::Black;
+            run_match(search_baseline, search_candidate, seed) == TeamKey::Black;
 
         [is_white_win, is_black_win]
-    });
+    }));
 
     // endregion
     // region: SPRT.
@@ -59,21 +59,20 @@ fn main() {
 
     let mut llr = 0.;
 
-    for (n_iter, is_win) in into_seq_iter(tasks).enumerate() {
-        if is_win {
-            llr += f64::ln(p_1 / p_0);
-        } else {
-            llr += f64::ln((1. - p_1) / (1. - p_0));
-        }
+    for (it, results) in results.enumerate() {
+        let num_wins: usize = results.iter().map(|&r| r as usize).sum();
+        let x: f64 = [0., 0.5, 1.][num_wins];
 
-        let time = now.elapsed();
-        println!("n_iter = {n_iter:>4} log_lr = {llr:>6.3} time = {time:.3?}");
+        llr += x * f64::ln(p_1 / p_0) + (1. - x) * f64::ln((1. - p_1) / (1. - p_0));
+
+        let elapsed = now.elapsed();
+        println!("it = {it:>4}  llr = {llr:>6.3}  elapsed = {elapsed:>6.2?}");
 
         if llr <= log_alpha {
-            println!("Accept H₀",);
+            println!("Accept H₀");
             break;
         } else if llr >= log_beta {
-            println!("Accept H₁",);
+            println!("Accept H₁");
             break;
         }
     }
@@ -82,22 +81,23 @@ fn main() {
 }
 
 fn run_match(
+    search_white: impl Fn(&Game, Command, u64) -> Command,
+    search_black: impl Fn(&Game, Command, u64) -> Command,
     seed: u64,
-    ns_per_move: u128,
-    mut search_white: impl FnMut(&Game, Command, u128) -> Command,
-    mut search_black: impl FnMut(&Game, Command, u128) -> Command,
 ) -> TeamKey {
     let mut game = Game::new(setup(seed).unwrap(), White);
     let mut mov = Command::None { team: TeamKey::Black };
 
     while !game.is_over() {
         mov = if game.color == TeamKey::White {
-            search_white(&game, mov, ns_per_move)
+            search_white(&game, mov, seed)
         } else {
-            search_black(&game, mov, ns_per_move)
+            search_black(&game, mov, seed)
         };
+
         game.play(mov);
     }
+
     game.world.active_team()
 }
 
@@ -107,7 +107,48 @@ fn elo(rating_diff: f64) -> f64 {
 
 // region: Search strategies
 
-fn search_pvs(game: &Game, _previous_move: Command, ns_per_move: u128) -> Command {
+fn search_mcts(game: &Game, previous_move: Command, search_seed: u64) -> Command {
+    let legal_moves = game.moves();
+    if legal_moves.len() == 1 {
+        return legal_moves[0];
+    }
+
+    let mut mcts = Mcts::new(previous_move);
+    let mut rng = Rng::seed_from_u64(search_seed);
+
+    for _ in 0..4096 {
+        let mut game = game.clone();
+        let node = mcts.select_and_expand(&mut game, &mut rng);
+
+        let reward = game.evaluate_f64();
+        mcts.backward(node, reward);
+    }
+
+    mcts.best_child().map(|node| node.mov).expect("`best_move` should exist")
+}
+
+fn search_sarsa(game: &Game, previous_move: Command, search_seed: u64) -> Command {
+    let legal_moves = game.moves();
+    if legal_moves.len() == 1 {
+        return legal_moves[0];
+    }
+
+    let mut mcts = Sarsa::new(previous_move);
+    let mut rng = Rng::seed_from_u64(search_seed);
+
+    for _ in 0..4096 {
+        let mut game = game.clone();
+        let node = mcts.select_and_expand(&mut game, &mut rng);
+
+        let reward = game.evaluate_f64();
+        mcts.backward(node, reward);
+    }
+
+    mcts.best_child().map(|node| node.mov).expect("`best_move` should exist")
+}
+
+#[must_use]
+pub fn search_pvs(game: &Game, _previous_move: Command, _search_seed: u64) -> Command {
     let legal_moves = game.moves();
     if legal_moves.len() == 1 {
         return legal_moves[0];
@@ -118,74 +159,20 @@ fn search_pvs(game: &Game, _previous_move: Command, ns_per_move: u128) -> Comman
     let mut pv = VecDeque::default();
     let mut history = FxHashMap::default();
 
+    let mut best_move = legal_moves[0];
+
     for depth in 1.. {
         let _score = search(depth, &mut pv, &mut history, game);
-        if thread_time_ns() - start_time >= ns_per_move {
+        if thread_time_ns() - start_time >= NS_PER_MOVE {
+            assert!(depth > 1);
             break;
         }
+
+        // Prevent the engine from making a move after overtime.
+        best_move = pv.front().copied().expect("`best_move` should exist");
     }
 
-    pv.pop_front().expect("`best_move` should exist")
-}
-
-fn search_mcts(game: &Game, _previous_move: Command, ns_per_move: u128) -> Command {
-    let legal_moves = game.moves();
-    if legal_moves.len() == 1 {
-        return legal_moves[0];
-    }
-
-    let start_time = thread_time_ns();
-
-    let mut mcts = Mcts::new(Command::None { team: TeamKey::Black });
-    let mut rng = Rng::from_os_rng();
-
-    for it in 1.. {
-        let mut game = game.clone();
-        let node = mcts.select_and_expand(&mut game, &mut rng);
-
-        let reward = game.evaluate_f64();
-        mcts.backward(node, reward);
-
-        if it % 1_000 == 0 && thread_time_ns() - start_time >= ns_per_move {
-            break;
-        }
-    }
-
-    mcts.best_child().map(|node| node.mov).expect("`best_move` should exist")
-}
-
-fn make_mcts_with_memory() -> impl FnMut(&Game, Command, u128) -> Command {
-    let mut mcts = Mcts::new(Command::None { team: TeamKey::Black });
-    let mut rng = Rng::from_os_rng();
-
-    move |game: &Game, previous_move: Command, ns_per_move: u128| {
-        let start_time = thread_time_ns();
-
-        if let Some(prev_node) =
-            mcts.children().iter().find(|node| node.mov == previous_move)
-        {
-            mcts = mcts.clone_subtree(prev_node);
-        } else {
-            mcts = Mcts::new(previous_move);
-        }
-
-        for it in 1.. {
-            let mut game = game.clone();
-            let node = mcts.select_and_expand(&mut game, &mut rng);
-
-            let reward = game.evaluate_f64();
-            mcts.backward(node, reward);
-
-            if it % 1_000 == 0 && thread_time_ns() - start_time >= ns_per_move {
-                break;
-            }
-        }
-
-        let best_child = mcts.best_child().expect("`best_child` should exist");
-        let best_mov = best_child.mov;
-        mcts = mcts.clone_subtree(best_child);
-        best_mov
-    }
+    best_move
 }
 
 // endregion
@@ -214,6 +201,8 @@ fn thread_time_ns() -> u128 {
     tv_sec * 1_000_000_000 + tv_nsec
 }
 
+/// Transforms `par_iter` into a sequential iterator that yields items as they
+/// are generated, in an arbitrary order.
 fn into_seq_iter<P: ParallelIterator + 'static>(
     par_iter: P,
 ) -> impl Iterator<Item = P::Item> {

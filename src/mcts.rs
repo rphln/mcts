@@ -31,6 +31,13 @@ use crate::game::{Command, Game};
 /// The search is performed iteratively, and the best move found so far can be
 /// queried after each iteration with [`Self::best_child`]. The entire principal
 /// variation is available through [`Self::principal_variation`].
+///
+/// # References
+///
+/// 1. <https://github.com/lightvector/KataGo/blob/master/docs/GraphSearch.md>
+/// 2. <https://modelassist.epixanalytics.com/space/EA/26575264>
+/// 3. <https://web.stanford.edu/~bvr/pubs/TS_Tutorial.pdf#page=45>
+/// 4. <https://gist.github.com/rphln/fbbab3e0a432b95ec93d1e29e16acb03>
 #[derive(Clone, Debug)]
 pub struct Mcts {
     /// See <https://www.cs.cornell.edu/~asampson/blog/flattening.html>.
@@ -66,7 +73,7 @@ impl MctsNode {
     /// Creates a new node with default statistics.
     #[must_use]
     fn new(parent: usize, mov: Command) -> Self {
-        Self { mov, visits: 0, value: f64::NAN, parent, head: 0, last: 0 }
+        Self { mov, visits: 0, value: 0., parent, head: 0, last: 0 }
     }
 
     /// Returns whether this node is the root node.
@@ -162,39 +169,6 @@ impl Mcts {
         game: &mut Game,
         rng: &mut impl Rng,
     ) -> usize {
-        // See [1] for a reference on our implementation and the possibility of
-        // using graphs instead of trees.
-        //
-        // These are the selection policies we can use:
-        //
-        // 1. Thompson sampling from the beta distribution.
-        // 2. Thompson sampling, approximating the beta distribution with a normal
-        //    distribution. [2]
-        // 3. UCT.
-        // 4. Bayesian UCB.
-        //
-        // We don't need to use virtual losses with Thompson sampling [3], which
-        // is good if we decide to use multithreading for the selection, as it
-        // removes the need for most write locks.
-        //
-        // In the single-threaded version, it's better to use Bayesian UCB with
-        // virtual losses instead, because sampling from the beta distribution
-        // is slow; sampling from the normal distribution is faster, but it's
-        // still slower than UCB.
-        //
-        // On the other hand, Thompson sampling with the beta prior is more
-        // accurate than the other options; if our estimator (i.e., the neural
-        // network) is slow but accurate, we should prefer it, as the cost of
-        // the sampling becomes negligible.
-        //
-        // There's also the option of combining them *with* a binary-search
-        // policy [4] to speed up the search at the cost of accuracy.
-        //
-        // [1]: https://github.com/lightvector/KataGo/blob/master/docs/GraphSearch.md
-        // [2]: https://modelassist.epixanalytics.com/space/EA/26575264
-        // [3]: https://web.stanford.edu/~bvr/pubs/TS_Tutorial.pdf#page=45
-        // [4]: https://gist.github.com/rphln/fbbab3e0a432b95ec93d1e29e16acb03
-
         let skip_expansion = self.tree[node].visits < self.visits_to_expand;
         if skip_expansion || game.is_over() {
             return node;
@@ -231,8 +205,6 @@ impl Mcts {
         let next = head
             + epsilon_greedy_policy(&self.tree[head..last], self.exploration_rate, rng);
         game.play(self.tree[next].mov);
-
-        assert!(next > node);
 
         self.select_and_expand_node(next, game, rng)
     }
