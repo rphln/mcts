@@ -1,6 +1,7 @@
 use std::iter::successors;
 
 use rand::{Rng, seq::SliceRandom};
+use rustc_hash::FxHashMap;
 
 use crate::game::{Command, Game};
 
@@ -38,18 +39,17 @@ use crate::game::{Command, Game};
 /// 2. <https://modelassist.epixanalytics.com/space/EA/26575264>
 /// 3. <https://web.stanford.edu/~bvr/pubs/TS_Tutorial.pdf#page=45>
 /// 4. <https://gist.github.com/rphln/fbbab3e0a432b95ec93d1e29e16acb03>
+/// 5. <https://repository.falmouth.ac.uk/2782/1/MemoryLimiting.pdf>
 #[derive(Clone, Debug)]
 pub struct Mcts {
     /// See <https://www.cs.cornell.edu/~asampson/blog/flattening.html>.
     pub tree: Vec<MctsNode>,
+    /// Global value estimator.
+    pub heuristic: FxHashMap<Command, f64>,
     /// See <https://stackoverflow.com/a/35666246>.
     pub visits_to_expand: usize,
     /// Exploration rate (ε) for the ε-greedy policy.
     pub exploration_rate: f64,
-    /// Discount factor (γ) for the reward backprogation.
-    pub discount_factor: f64,
-    /// Learning rate (α) for the temporal difference update.
-    pub learning_rate: f64,
 }
 
 /// Statistics for a single ply in the game tree.
@@ -101,11 +101,20 @@ impl Mcts {
     pub fn new(root_move: Command) -> Self {
         Self {
             tree: vec![MctsNode::new(Self::SENTINEL, root_move)],
+            heuristic: FxHashMap::default(),
             visits_to_expand: 1,
-            exploration_rate: 0.1,
-            learning_rate: 0.05,
-            discount_factor: 0.999,
+            exploration_rate: 0.2,
         }
+    }
+
+    /// Returns the total number of nodes in the tree.
+    #[expect(
+        clippy::len_without_is_empty,
+        reason = "The tree always contains at least the root."
+    )]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.tree.len()
     }
 
     /// Returns the root node of the tree.
@@ -121,6 +130,16 @@ impl Mcts {
         let last = self.tree[0].last;
 
         &self.tree[head..last]
+    }
+
+    /// Returns the depth of a `node`.
+    #[must_use]
+    pub fn depth(&self, node: usize) -> usize {
+        if node == 0 {
+            return 0;
+        }
+
+        1 + self.depth(self.tree[node].parent)
     }
 
     /// Returns the best child node found so far.
@@ -198,12 +217,21 @@ impl Mcts {
             // See <https://www.chessprogramming.org/One_Reply_Extensions>.
             if last - head == 1 {
                 self.tree[head].visits = self.tree[node].visits;
-                self.tree[head].value = -self.tree[node].value / self.discount_factor;
+                self.tree[head].value = -self.tree[node].value;
             }
         }
 
         let next = head
-            + epsilon_greedy_policy(&self.tree[head..last], self.exploration_rate, rng);
+            + epsilon_greedy_policy(
+                &self.tree[head..last],
+                self.exploration_rate,
+                rng,
+                |node| {
+                    let heuristic =
+                        self.heuristic.get(&node.mov).copied().unwrap_or_default();
+                    node.value + heuristic / (1. + node.visits as f64)
+                },
+            );
         game.play(self.tree[next].mov);
 
         self.select_and_expand_node(next, game, rng)
@@ -214,136 +242,30 @@ impl Mcts {
     /// Rewards must be provided from the perspective of the side moving at the
     /// leaf.
     pub fn backward(&mut self, node: usize, value: f64) {
-        // See <https://www.chessprogramming.org/Negamax>.
-        let value = -value;
-
-        // See <https://gibberblot.github.io/rl-notes/single-agent/reward-shaping.html#q-value-initialisation>.
-        self.tree[node].value = value;
-        self.tree[node].visits += 1;
-
-        self.backward_q_learning(self.tree[node].parent);
-    }
-
-    pub fn backward_q_learning(&mut self, node: usize) {
         if node == Self::SENTINEL {
             return;
         }
 
-        let value = {
-            let head = self.tree[node].head;
-            let last = self.tree[node].last;
-
-            let value = self.tree[head..last]
-                .iter()
-                .filter(|node| node.visits > 0)
-                .map(|node| node.value)
-                .reduce(f64::max)
-                .expect("`node` should not be a leaf");
-            -value
-        };
-
-        let reward = 0.; // No intermediate rewards for now.
-        let target = reward + self.discount_factor * value;
+        // See <https://www.chessprogramming.org/Negamax>.
+        let value = -value;
 
         self.tree[node].visits += 1;
-        self.tree[node].value += self.learning_rate * (target - self.tree[node].value);
+        self.tree[node].value +=
+            (value - self.tree[node].value) / (self.tree[node].visits as f64);
 
-        self.backward_q_learning(self.tree[node].parent);
-    }
+        self.backward(self.tree[node].parent, value);
 
-    /// Returns a copy of the subtree rooted at the given node.
-    ///
-    /// Behavior is undefined if the given node is not in the tree.
-    #[must_use]
-    pub fn clone_subtree(&self, root: &MctsNode) -> Self {
-        let mut subtree = vec![MctsNode { parent: Self::SENTINEL, ..root.clone() }];
-
-        for parent in 0.. {
-            let Some(node) = subtree.get(parent) else {
-                break;
-            };
-
-            let head = subtree.len();
-
-            // At first, we copy the children as-is, and so `head` and `last`
-            // will point to the old tree until we visit them in this loop. This
-            // trick allows us to have an implicit queue of nodes to visit
-            // entirely for free.
-            for child in &self.tree[node.head..node.last] {
-                subtree.push(MctsNode { parent, ..child.clone() });
-            }
-
-            let last = subtree.len();
-
-            // If `node` is a leaf, then `head` and `last` are equal. This is
-            // exactly the same criterion that the expansion step uses to check
-            // for leaves: it doesn't matter *where* they point to, as long as
-            // they're equal.
-            subtree[parent].head = head;
-            subtree[parent].last = last;
-        }
-
-        Self {
-            tree: subtree,
-            visits_to_expand: self.visits_to_expand,
-            exploration_rate: self.exploration_rate,
-            learning_rate: self.learning_rate,
-            discount_factor: self.discount_factor,
-        }
-    }
-
-    /// Returns the total number of nodes in the tree.
-    #[expect(
-        clippy::len_without_is_empty,
-        reason = "The tree always contains at least the root."
-    )]
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.tree.len()
-    }
-
-    /// Runs garbage collection on the tree.
-    ///
-    /// See <https://repository.falmouth.ac.uk/2782/1/MemoryLimiting.pdf>.
-    pub fn gc(&mut self, threshold: usize) {
-        if self.tree.len() == 1 {
+        if node == 0 {
             return;
         }
 
-        let mut subtree = vec![self.root().clone()];
+        let node_value = self.tree[node].value;
+        let parent_value = -self.tree[self.tree[node].parent].value;
 
-        for parent in 0.. {
-            let Some(node) = subtree.get(parent) else {
-                break;
-            };
+        let target = node_value - parent_value;
 
-            let head = subtree.len();
-
-            // At first, we copy the children as-is, and so `head` and `last`
-            // will point to the old tree until we visit them in this loop. This
-            // trick allows us to have an implicit queue of nodes to visit
-            // entirely for free.
-            for next in node.head..node.last {
-                let mut child = MctsNode { parent, ..self.tree[next].clone() };
-                if child.visits < threshold {
-                    child.head = 0;
-                    child.last = 0;
-                }
-
-                subtree.push(child);
-            }
-
-            let last = subtree.len();
-
-            // If `node` is a leaf, then `head` and `last` are equal. This is
-            // exactly the same criterion that the expansion step uses to check
-            // for leaves: it doesn't matter *where* they point to, as long as
-            // they're equal.
-            subtree[parent].head = head;
-            subtree[parent].last = last;
-        }
-
-        self.tree = subtree;
+        let pred = self.heuristic.entry(self.tree[node].mov).or_default();
+        *pred += 0.5 * (target - *pred);
     }
 }
 
@@ -351,6 +273,7 @@ fn epsilon_greedy_policy(
     nodes: &[MctsNode],
     exploration_rate: f64,
     rng: &mut impl Rng,
+    heuristic: impl Fn(&MctsNode) -> f64,
 ) -> usize {
     assert!(!nodes.is_empty(), "`nodes` must be non-empty.");
 
@@ -358,7 +281,7 @@ fn epsilon_greedy_policy(
         return 0;
     }
 
-    if exploration_rate >= 1. || rng.random_bool(exploration_rate) {
+    if rng.random_bool(exploration_rate) {
         return rng.random_range(0..nodes.len());
     }
 
@@ -366,13 +289,10 @@ fn epsilon_greedy_policy(
     let mut best_value = f64::NEG_INFINITY;
 
     for (index, node) in nodes.iter().enumerate() {
-        if node.visits < 1 {
-            return index;
-        }
-
-        if node.value > best_value {
+        let value = heuristic(node);
+        if value > best_value {
             best_index = index;
-            best_value = node.value;
+            best_value = value;
         }
     }
 

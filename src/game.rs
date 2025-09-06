@@ -1,9 +1,9 @@
+pub use swift_swallow::{command::Command, team::TeamKey as Color};
 use swift_swallow::{
     content::game,
     rules::{decide, query_actions, start},
     world::World,
 };
-pub use swift_swallow::{event::Command, team::TeamKey as Color};
 
 #[derive(Clone)]
 pub struct Game {
@@ -79,6 +79,6 @@ impl Game {
             }
         }
 
-        max - min
+        f64::tanh((max - min) / 32.)
     }
 }

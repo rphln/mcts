@@ -4,25 +4,19 @@
 
 pub mod game;
 pub mod mcts;
-pub mod pvs;
-pub mod sarsa;
 
-use std::{collections::VecDeque, sync::mpsc, thread, time::Instant};
+use std::{sync::mpsc, thread, time::Instant};
 
-use rand::SeedableRng;
+use rand::{SeedableRng, seq::IndexedRandom};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use rustc_hash::FxHashMap;
 use swift_swallow::{
     Rng,
-    event::Command,
+    command::Command,
     examples::setup,
-    team::TeamKey::{self, White},
+    team::TeamKey::{self, Black, White},
 };
 
-use crate::{game::Game, mcts::Mcts, pvs::search, sarsa::Sarsa};
-
-const MS: u128 = 1_000_000;
-const NS_PER_MOVE: u128 = 10 * MS;
+use crate::{game::Game, mcts::Mcts};
 
 fn main() {
     // region: Configuration.
@@ -30,23 +24,33 @@ fn main() {
     let search_baseline = search_mcts;
     let search_candidate = search_mcts;
 
-    let p_0 = elo(0.); // H₀: Candidate = Baseline
-    let p_1 = elo(10.); // H₁: Candidate > Baseline
+    let elo_0 = 0.;
+    let elo_1 = 10.;
 
     let alpha = 0.05;
-    let beta = 0.05;
+    let beta = 0.10;
 
     // endregion
     // region: Generate games.
 
     let results = into_seq_iter((0..10_000).into_par_iter().map(move |seed| {
-        let is_white_win =
-            run_match(search_candidate, search_baseline, seed) == TeamKey::White;
+        let mut w = 0;
+        let mut d = 0;
+        let mut l = 0;
 
-        let is_black_win =
-            run_match(search_baseline, search_candidate, seed) == TeamKey::Black;
+        match run_match(search_candidate, search_baseline, seed) {
+            Some(White) => w += 1,
+            Some(Black) => l += 1,
+            None => d += 1,
+        }
 
-        [is_white_win, is_black_win]
+        match run_match(search_baseline, search_candidate, seed) {
+            Some(Black) => w += 1,
+            Some(White) => l += 1,
+            None => d += 1,
+        }
+
+        (w, d, l)
     }));
 
     // endregion
@@ -54,25 +58,58 @@ fn main() {
 
     let now = Instant::now();
 
-    let log_alpha = f64::ln(beta / (1. - alpha));
-    let log_beta = f64::ln((1. - beta) / alpha);
+    let p_0 = elo(elo_0); // H₀: Candidate <= Baseline
+    let p_1 = elo(elo_1); // H₁: Candidate > Baseline
+
+    let lower = f64::ln(beta / (1. - alpha));
+    let upper = f64::ln((1. - beta) / alpha);
 
     let mut llr = 0.;
 
-    for (it, results) in results.enumerate() {
-        let num_wins: usize = results.iter().map(|&r| r as usize).sum();
-        let x: f64 = [0., 0.5, 1.][num_wins];
+    // region: Tally.
 
-        llr += x * f64::ln(p_1 / p_0) + (1. - x) * f64::ln((1. - p_1) / (1. - p_0));
+    let mut w = 0;
+    let mut d = 0;
+    let mut l = 0;
 
+    let mut ww = 0;
+    let mut wd = 0;
+    let mut dd = 0;
+    let mut ld = 0;
+    let mut ll = 0;
+
+    // endregion
+
+    for (r_w, r_d, r_l) in results {
         let elapsed = now.elapsed();
-        println!("it = {it:>4}  llr = {llr:>6.3}  elapsed = {elapsed:>6.2?}");
 
-        if llr <= log_alpha {
-            println!("Accept H₀");
+        w += r_w;
+        d += r_d;
+        l += r_l;
+
+        match (r_w, r_d, r_l) {
+            (2, 0, 0) => ww += 1,
+            (1, 1, 0) => wd += 1,
+            (0, 2, 0) | (1, 0, 1) => dd += 1,
+            (0, 1, 1) => ld += 1,
+            (0, 0, 2) => ll += 1,
+            (_, _, _) => unreachable!("{r_w}, {r_d}, {r_l}"),
+        }
+
+        let y = f64::from(r_w) / 2. + f64::from(r_d) / 4.;
+        llr += y * f64::ln(p_1 / p_0) + (1. - y) * f64::ln((1. - p_1) / (1. - p_0));
+
+        println!();
+        println!("Status | {elapsed:.2?} elapsed...");
+        println!("LLR    | {llr:.2} ({lower:.2}, {upper:.2}) [{elo_0:.2}, {elo_1:.2}]");
+        println!("Games  | N: {n} W: {w} D: {d} L: {l}", n = w + d + l);
+        println!("Penta  | WW: {ww} WD: {wd} DD: {dd} LD: {ld} LL: {ll}");
+
+        if llr <= lower {
+            println!("Result | Accept H₀");
             break;
-        } else if llr >= log_beta {
-            println!("Accept H₁");
+        } else if llr >= upper {
+            println!("Result | Accept H₁");
             break;
         }
     }
@@ -84,11 +121,15 @@ fn run_match(
     search_white: impl Fn(&Game, Command, u64) -> Command,
     search_black: impl Fn(&Game, Command, u64) -> Command,
     seed: u64,
-) -> TeamKey {
+) -> Option<TeamKey> {
     let mut game = Game::new(setup(seed).unwrap(), White);
     let mut mov = Command::None { team: TeamKey::Black };
 
-    while !game.is_over() {
+    let mut moves = 0;
+
+    while !game.is_over() && moves < 1024 {
+        moves += 1;
+
         mov = if game.color == TeamKey::White {
             search_white(&game, mov, seed)
         } else {
@@ -98,7 +139,11 @@ fn run_match(
         game.play(mov);
     }
 
-    game.world.active_team()
+    if moves >= 1024 {
+        return None;
+    }
+
+    Some(game.world.active_team())
 }
 
 fn elo(rating_diff: f64) -> f64 {
@@ -116,90 +161,33 @@ fn search_mcts(game: &Game, previous_move: Command, search_seed: u64) -> Command
     let mut mcts = Mcts::new(previous_move);
     let mut rng = Rng::seed_from_u64(search_seed);
 
-    for _ in 0..4096 {
+    let mut nodes = 0;
+
+    while nodes < 10_000 {
         let mut game = game.clone();
         let node = mcts.select_and_expand(&mut game, &mut rng);
 
-        let reward = game.evaluate_f64();
-        mcts.backward(node, reward);
-    }
+        nodes += mcts.depth(node);
 
-    mcts.best_child().map(|node| node.mov).expect("`best_move` should exist")
-}
+        // See <https://www.sciencedirect.com/science/article/pii/S0304397516302717>.
+        for _ in 0..2 {
+            let &mov =
+                game.moves().choose(&mut rng).expect("`moves` should be non-empty");
+            game.play(mov);
 
-fn search_sarsa(game: &Game, previous_move: Command, search_seed: u64) -> Command {
-    let legal_moves = game.moves();
-    if legal_moves.len() == 1 {
-        return legal_moves[0];
-    }
-
-    let mut mcts = Sarsa::new(previous_move);
-    let mut rng = Rng::seed_from_u64(search_seed);
-
-    for _ in 0..4096 {
-        let mut game = game.clone();
-        let node = mcts.select_and_expand(&mut game, &mut rng);
-
-        let reward = game.evaluate_f64();
-        mcts.backward(node, reward);
-    }
-
-    mcts.best_child().map(|node| node.mov).expect("`best_move` should exist")
-}
-
-#[must_use]
-pub fn search_pvs(game: &Game, _previous_move: Command, _search_seed: u64) -> Command {
-    let legal_moves = game.moves();
-    if legal_moves.len() == 1 {
-        return legal_moves[0];
-    }
-
-    let start_time = thread_time_ns();
-
-    let mut pv = VecDeque::default();
-    let mut history = FxHashMap::default();
-
-    let mut best_move = legal_moves[0];
-
-    for depth in 1.. {
-        let _score = search(depth, &mut pv, &mut history, game);
-        if thread_time_ns() - start_time >= NS_PER_MOVE {
-            assert!(depth > 1);
-            break;
+            nodes += 1;
         }
 
-        // Prevent the engine from making a move after overtime.
-        best_move = pv.front().copied().expect("`best_move` should exist");
+        let reward = game.evaluate_f64();
+        mcts.backward(node, reward);
     }
 
-    best_move
+    mcts.best_child().map(|node| node.mov).expect("`best_move` should exist")
 }
 
 // endregion
 
 // region: Helpers.
-
-/// Returns the current CPU time in nanoseconds.
-///
-/// # Panics
-///
-/// Panics if the system call to get the CPU time fails.
-fn thread_time_ns() -> u128 {
-    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-
-    unsafe {
-        assert_ne!(
-            libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &raw mut time),
-            -1,
-            "Failed to get CPU time"
-        );
-    };
-
-    let tv_sec = u128::try_from(time.tv_sec).unwrap();
-    let tv_nsec = u128::try_from(time.tv_nsec).unwrap();
-
-    tv_sec * 1_000_000_000 + tv_nsec
-}
 
 /// Transforms `par_iter` into a sequential iterator that yields items as they
 /// are generated, in an arbitrary order.
