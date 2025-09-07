@@ -182,7 +182,7 @@ impl Mcts {
     /// explore.
     ///
     /// Internal implementation of [`Mcts::select_and_expand`].
-    fn select_and_expand_node(
+    pub fn select_and_expand_node(
         &mut self,
         node: usize,
         game: &mut Game,
