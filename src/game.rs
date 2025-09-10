@@ -70,7 +70,7 @@ impl Game {
 
         for character in &self.world.characters {
             let health = f64::from(character.current_effective_health());
-            let points = (64. * health).sqrt();
+            let points = health.ln_1p();
 
             if character.team == self.color {
                 max += points;

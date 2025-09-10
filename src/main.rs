@@ -4,7 +4,7 @@
 pub mod game;
 pub mod mcts;
 
-use std::io;
+use std::io::{self, BufRead, Write};
 
 use rand::{SeedableRng, seq::IndexedRandom};
 use swift_swallow::{
@@ -13,91 +13,109 @@ use swift_swallow::{
     examples::setup,
     team::TeamKey::{self, White},
 };
+use swift_swallow_io::{Handshaken, Request};
 
 use crate::{game::Game, mcts::Mcts};
 
 fn main() -> anyhow::Result<()> {
-    let mut game_seed = 0;
-    let mut search_seed = 0;
-
+    let game_seed = 0;
     let mut game = Game::new(setup(game_seed).unwrap(), White);
-    let mut previous_move = Command::None { team: TeamKey::Black };
 
-    for line in io::stdin().lines() {
-        let line = line?;
-        let tokens: Vec<&str> = line.split_ascii_whitespace().collect();
+    let mut stdout = io::stdout();
+    let stdin = io::stdin();
 
-        match tokens.as_slice() {
-            // regioin: Handshake.
-            ["ugi"] => {
-                println!("id name swift_swallow");
-                println!("id author rphln");
-                println!("ugiok");
+    for line in stdin.lines() {
+        let res = match serde_json::from_str(&line?)? {
+            Request::Handshake(_req) => {
+                let res =
+                    Handshaken { name: "swift_swallow".into(), author: "rphln".into() };
+                serde_json::to_string(&res)?
             }
-            ["isready"] => {
-                println!("readyok");
+            Request::IsReady(_req) => {
+                let res = true;
+                serde_json::to_string(&res)?
             }
-            ["quit"] => break,
-            // endregion
-            // region: Configuration.
-            ["setoption", "name", "game_seed", "value", seed] => {
-                game_seed = u64::from_str_radix(seed, 16)?;
-            }
-            ["setoption", "name", "search_seed", "value", seed] => {
-                search_seed = u64::from_str_radix(seed, 16)?;
-            }
-            // endregion
-            // region: Gaming.
-            ["uginewgame"] => {}
-            ["position", "startpos", suffix @ ..] => {
-                game = Game::new(setup(game_seed).unwrap(), White);
-                previous_move = Command::None { team: TeamKey::Black };
+            Request::Position(position) => {
+                game = Game::new(setup(position.seed).unwrap(), White);
 
-                if let ["moves", moves @ ..] = suffix {
-                    for mov in moves {
-                        let tokens: Vec<&str> = mov.split('/').collect();
-                        let Ok(mov) = Command::try_from(tokens.as_slice()) else {
-                            anyhow::bail!("Bad play command: {tokens:?}");
-                        };
-
-                        game.play(mov);
-                        previous_move = mov;
-                    }
+                for &mov in &position.moves {
+                    game.play(mov);
                 }
-            }
-            ["play", mov] => {
-                let tokens: Vec<&str> = mov.split('/').collect();
-                let Ok(mov) = Command::try_from(tokens.as_slice()) else {
-                    anyhow::bail!("Bad play command: {tokens:?}");
-                };
 
-                game.play(mov);
+                let res = ();
+                serde_json::to_string(&res)?
             }
-            ["go", ..] => {
-                let mov = search(&game, previous_move, search_seed);
-                game.play(mov);
+            Request::Search(args) => {
+                let res =
+                    search(&game, Command::None { team: TeamKey::Black }, args.seed);
 
-                println!("bestmove {mov}");
+                serde_json::to_string(&res)?
             }
-            // endregion
-            // region: Queries.
-            ["query", "result"] => {
-                let side = match game.world.active_team() {
-                    _team if !game.is_over() => "none",
-                    TeamKey::White => "p1win",
-                    TeamKey::Black => "p2win",
-                };
+            Request::Status(_args) => {
+                let is_over = game.is_over();
+                let side = Some(game.world.active_team()); // TODO: Handle draws.
 
-                println!("response {side}");
+                let res = (is_over, side);
+
+                serde_json::to_string(&res)?
             }
-            // endregion
-            tokens => {
-                anyhow::bail!("Invalid command in this state: {tokens:?}");
-            }
-        }
+        };
+
+        stdout.write_all(res.as_bytes())?;
+        stdout.write(b"\n")?;
+        stdout.flush()?;
     }
 
     Ok(())
+}
+
+#[cfg(false)]
+fn foo() {
+    let line = line?;
+    let tokens: Vec<&str> = line.split_ascii_whitespace().collect();
+
+    match tokens.as_slice() {
+        // region: Configuration.
+        ["setoption", "name", "game_seed", "value", seed] => {
+            game_seed = u64::from_str_radix(seed, 16)?;
+        }
+        ["setoption", "name", "search_seed", "value", seed] => {
+            search_seed = u64::from_str_radix(seed, 16)?;
+        }
+        // endregion
+        // region: Gaming.
+        ["uginewgame"] => {}
+        ["position", "startpos", suffix @ ..] => {}
+        ["play", mov] => {
+            let tokens: Vec<&str> = mov.split('/').collect();
+            let Ok(mov) = Command::try_from(tokens.as_slice()) else {
+                anyhow::bail!("Bad play command: {tokens:?}");
+            };
+
+            game.play(mov);
+        }
+        ["go", ..] => {
+            let mov = search(&game, previous_move, search_seed);
+            game.play(mov);
+
+            println!("bestmove {mov}");
+        }
+        // endregion
+        // region: Queries.
+        ["query", "result"] => {
+            let side = match game.world.active_team() {
+                _team if !game.is_over() => "none",
+                TeamKey::White => "p1win",
+                TeamKey::Black => "p2win",
+            };
+
+            println!("response {side}");
+        }
+        // endregion
+        tokens => {
+            anyhow::bail!("Invalid command in this state: {tokens:?}");
+        }
+    }
 }
 
 fn search(game: &Game, previous_move: Command, search_seed: u64) -> Command {
