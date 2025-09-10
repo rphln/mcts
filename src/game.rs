@@ -79,6 +79,6 @@ impl Game {
             }
         }
 
-        f64::tanh((max - min) / 32.)
+        max - min
     }
 }
