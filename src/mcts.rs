@@ -151,12 +151,7 @@ impl Mcts {
     /// Returns an iterator over the sequence of best moves found so far.
     pub fn principal_variation(&self) -> impl Iterator<Item = &MctsNode> {
         successors(self.tree.first(), |parent| {
-            self.tree[parent.head..parent.last]
-                .iter()
-                .filter(|node| node.visits > 0)
-                .max_by(|left, right| {
-                    f64::partial_cmp(&left.value, &right.value).unwrap()
-                })
+            self.tree[parent.head..parent.last].iter().max_by_key(|node| node.visits)
         })
     }
 
