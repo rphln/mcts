@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 swift_swallow.workspace = true
-swift_swallow_io.workspace = true
+swift_swallow_rpc.workspace = true
 
 rand = "0.9.0"
 rand_xoshiro = "0.7.0"
