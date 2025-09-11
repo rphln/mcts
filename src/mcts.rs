@@ -45,7 +45,7 @@ pub struct Mcts {
     /// See <https://www.cs.cornell.edu/~asampson/blog/flattening.html>.
     pub tree: Vec<MctsNode>,
     /// Global value estimator.
-    pub heuristic: FxHashMap<Command, f64>,
+    pub heuristic: FxHashMap<Command, (f64, usize)>,
     /// See <https://stackoverflow.com/a/35666246>.
     pub visits_to_expand: usize,
     /// Exploration rate (ε) for the ε-greedy policy.
@@ -217,7 +217,6 @@ impl Mcts {
         }
 
         let parent_value = -self.tree[node].value;
-        let t = f64::sqrt(self.tree[node].visits as f64);
 
         let next = head
             + epsilon_greedy_policy(
@@ -225,14 +224,20 @@ impl Mcts {
                 self.exploration_rate,
                 rng,
                 |child| {
-                    let relative_heuristic =
+                    let (relative_heuristic, heuristic_visits) =
                         self.heuristic.get(&child.mov).copied().unwrap_or_default();
-                    let heuristic = parent_value + relative_heuristic;
+                    let heuristic_value = parent_value + relative_heuristic;
 
-                    let n = f64::sqrt(child.visits as f64);
+                    if child.visits == 0 && heuristic_visits == 0 {
+                        return f64::INFINITY;
+                    }
+
+                    let t = heuristic_visits as f64;
+                    let n = child.visits as f64;
+
                     let alpha = n / (t + n);
 
-                    alpha * child.value + (1. - alpha) * heuristic
+                    alpha * child.value + (1. - alpha) * heuristic_value
                 },
             );
         game.play(self.tree[next].mov);
@@ -262,13 +267,19 @@ impl Mcts {
             return;
         }
 
-        let node_value = self.tree[node].value;
-        let parent_value = -self.tree[self.tree[node].parent].value;
+        let target = {
+            let node_value = self.tree[node].value;
+            let parent_value = -self.tree[self.tree[node].parent].value;
 
-        let target = node_value - parent_value;
+            node_value - parent_value
+        };
 
-        let pred = self.heuristic.entry(self.tree[node].mov).or_default();
-        *pred += 0.5 * (target - *pred);
+        let (relative_heuristic, heuristic_visits) =
+            self.heuristic.entry(self.tree[node].mov).or_default();
+
+        *heuristic_visits += 1;
+        *relative_heuristic +=
+            (target - *relative_heuristic) / (*heuristic_visits as f64);
     }
 }
 
