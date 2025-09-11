@@ -21,11 +21,6 @@ fn main() -> anyhow::Result<()> {
     let game_seed = 0;
     let mut game = Game::new(setup(game_seed).unwrap(), White);
 
-    let mut mcts = Mcts::new(Command::None { team: TeamKey::Black });
-
-    let mut root_node = 0;
-    let mut root_depth = 0;
-
     let mut tx = BufWriter::new(io::stdout());
 
     for line in io::stdin().lines() {
@@ -47,37 +42,10 @@ fn main() -> anyhow::Result<()> {
             Request::Reset(position) => {
                 game = Game::new(setup(position.seed).unwrap(), White);
 
-                mcts = Mcts::new(Command::None { team: TeamKey::Black });
-
-                root_node = 0;
-                root_depth = 0;
-
                 let res = ();
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Play(Play { mov }) => {
-                // region: Traverse the MCTS tree.
-
-                let head = mcts.tree[root_node].head;
-                let last = mcts.tree[root_node].last;
-
-                if let Some(next) =
-                    (head..last).into_iter().find(|&next| mcts.tree[next].mov == mov)
-                {
-                    root_node = next;
-                    root_depth += 1;
-
-                    assert!(root_node >= head);
-                    assert!(root_node < last);
-                } else {
-                    mcts = Mcts::new(mov);
-
-                    root_node = 0;
-                    root_depth = 0;
-                }
-
-                // endregion
-
                 game.play(mov);
 
                 // TODO: Handle draws.
@@ -92,41 +60,7 @@ fn main() -> anyhow::Result<()> {
             // endregion
             // region: Search messages.
             Request::Search(args) => {
-                let mut rng = Rng::seed_from_u64(args.seed);
-
-                let legal_moves = game.moves();
-                let res = if legal_moves.len() == 1 {
-                    legal_moves[0]
-                } else {
-                    let mut nodes = 0;
-
-                    while nodes < args.nodes {
-                        let mut game = game.clone();
-                        let node =
-                            mcts.select_and_expand_node(root_node, &mut game, &mut rng);
-
-                        nodes += mcts.depth(node) - root_depth;
-
-                        // See <https://www.sciencedirect.com/science/article/pii/S0304397516302717>.
-                        for _ in 0..2 {
-                            let &mov = game
-                                .moves()
-                                .choose(&mut rng)
-                                .expect("`moves` should be non-empty");
-                            game.play(mov);
-
-                            nodes += 1;
-                        }
-
-                        let reward = game.evaluate();
-                        mcts.backward(node, reward);
-                    }
-
-                    mcts.best_child()
-                        .map(|node| node.mov)
-                        .expect("`best_move` should exist")
-                };
-
+                let res = search(&game, args.nodes, args.seed);
                 serde_json::to_writer(&mut tx, &res)?;
             } // endregion
         }
@@ -136,4 +70,39 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn search(game: &Game, max_nodes: usize, seed: u64) -> Command {
+    let legal_moves = game.moves();
+    assert!(!legal_moves.is_empty(), "No legal moves.");
+
+    if legal_moves.len() == 1 {
+        return legal_moves[0];
+    }
+
+    let mut rng = Rng::seed_from_u64(seed);
+    let mut mcts = Mcts::new(Command::None { team: TeamKey::Black });
+
+    let mut nodes = 0;
+
+    while nodes < max_nodes {
+        let mut game = game.clone();
+        let node = mcts.select_and_expand(&mut game, &mut rng);
+
+        nodes += mcts.depth(node);
+
+        // See <https://www.sciencedirect.com/science/article/pii/S0304397516302717>.
+        for _ in 0..2 {
+            let &mov =
+                game.moves().choose(&mut rng).expect("`moves` should be non-empty");
+            game.play(mov);
+
+            nodes += 1;
+        }
+
+        let reward = game.evaluate();
+        mcts.backward(node, reward);
+    }
+
+    mcts.best_child().map(|node| node.mov).expect("`best_move` should exist")
 }
