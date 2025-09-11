@@ -118,7 +118,7 @@ fn main() -> anyhow::Result<()> {
                             nodes += 1;
                         }
 
-                        let reward = game.evaluate_f64();
+                        let reward = game.evaluate();
                         mcts.backward(node, reward);
                     }
 
