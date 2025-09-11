@@ -221,15 +221,23 @@ impl Mcts {
             }
         }
 
+        let parent_value = -self.tree[node].value;
+        let t = f64::sqrt(self.tree[node].visits as f64);
+
         let next = head
             + epsilon_greedy_policy(
                 &self.tree[head..last],
                 self.exploration_rate,
                 rng,
-                |node| {
-                    let heuristic =
-                        self.heuristic.get(&node.mov).copied().unwrap_or_default();
-                    node.value + heuristic / (1. + node.visits as f64)
+                |child| {
+                    let relative_heuristic =
+                        self.heuristic.get(&child.mov).copied().unwrap_or_default();
+                    let heuristic = parent_value + relative_heuristic;
+
+                    let n = f64::sqrt(child.visits as f64);
+                    let alpha = n / (t + n);
+
+                    alpha * child.value + (1. - alpha) * heuristic
                 },
             );
         game.play(self.tree[next].mov);
@@ -273,7 +281,7 @@ fn epsilon_greedy_policy(
     nodes: &[MctsNode],
     exploration_rate: f64,
     rng: &mut impl Rng,
-    heuristic: impl Fn(&MctsNode) -> f64,
+    evaluate: impl Fn(&MctsNode) -> f64,
 ) -> usize {
     assert!(!nodes.is_empty(), "`nodes` must be non-empty.");
 
@@ -289,7 +297,7 @@ fn epsilon_greedy_policy(
     let mut best_value = f64::NEG_INFINITY;
 
     for (index, node) in nodes.iter().enumerate() {
-        let value = heuristic(node);
+        let value = evaluate(node);
         if value > best_value {
             best_index = index;
             best_value = value;
