@@ -228,14 +228,14 @@ impl Mcts {
                         self.heuristic.get(&child.mov).copied().unwrap_or_default();
                     let heuristic_value = parent_value + relative_heuristic;
 
-                    if child.visits == 0 && heuristic_visits == 0 {
+                    if heuristic_visits == 0 {
                         return f64::INFINITY;
                     }
 
                     let t = heuristic_visits as f64;
                     let n = child.visits as f64;
 
-                    let alpha = n / (t + n);
+                    let alpha = n / t;
 
                     alpha * child.value + (1. - alpha) * heuristic_value
                 },
