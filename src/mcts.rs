@@ -239,7 +239,7 @@ impl Mcts {
                     let t = f64::from(entry.visits);
                     let n = f64::from(child.visits);
 
-                    let alpha = n / t;
+                    let alpha = n / (n + t);
 
                     alpha * child.value + (1. - alpha) * (parent_value + entry.value)
                 },
