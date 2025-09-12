@@ -236,10 +236,11 @@ impl Mcts {
                         return f64::INFINITY;
                     };
 
-                    let t = f64::from(entry.visits);
+                    let m = f64::from(entry.visits);
                     let n = f64::from(child.visits);
 
-                    let alpha = n / (n + t);
+                    // Found through trial-and-error.
+                    let alpha = f64::sqrt(n / (n + m));
 
                     alpha * child.value + (1. - alpha) * (parent_value + entry.value)
                 },
