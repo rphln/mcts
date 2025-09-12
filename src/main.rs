@@ -94,6 +94,10 @@ fn search(game: &Game, max_nodes: usize, seed: u64) -> Move {
 
         // See <https://www.sciencedirect.com/science/article/pii/S0304397516302717>.
         for _ in 0..2 {
+            if game.is_over() {
+                break;
+            }
+
             let &mov =
                 game.moves().choose(&mut rng).expect("`moves` should be non-empty");
             game.play(mov);
