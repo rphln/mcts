@@ -1,9 +1,13 @@
-pub use swift_swallow::{command::Command, team::TeamKey as Color};
 use swift_swallow::{
+    command::Command,
     content::game,
     rules::{decide, query_actions, start},
+    team::TeamKey,
     world::World,
 };
+
+pub type Move = Command;
+pub type Color = TeamKey;
 
 #[derive(Clone)]
 pub struct Game {
@@ -28,16 +32,16 @@ impl Game {
     }
 
     #[must_use]
-    pub fn moves(&self) -> Vec<Command> {
+    pub fn moves(&self) -> Vec<Move> {
         if self.world.active_team() != self.color {
-            return vec![Command::None { team: self.color }];
+            return vec![Move::None { team: self.color }];
         }
 
         let rules = game();
         query_actions(&rules, &self.world).unwrap()
     }
 
-    pub fn play(&mut self, mov: Command) {
+    pub fn play(&mut self, mov: Move) {
         let rules = game();
         let _decide = decide(mov, &rules, &mut self.world).unwrap();
 

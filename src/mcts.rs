@@ -3,7 +3,7 @@ use std::iter::successors;
 use rand::{Rng, seq::SliceRandom};
 use rustc_hash::FxHashMap;
 
-use crate::game::{Command, Game};
+use crate::game::{Game, Move};
 
 /// An implementation of the Monte Carlo Tree Search algorithm with the
 /// following modifications:
@@ -44,10 +44,10 @@ use crate::game::{Command, Game};
 pub struct Mcts {
     /// See <https://www.cs.cornell.edu/~asampson/blog/flattening.html>.
     pub tree: Vec<MctsNode>,
-    /// Global value estimator.
-    pub heuristic: FxHashMap<Command, (f64, usize)>,
+    /// History heuristics.
+    pub history: FxHashMap<Move, HistoryEntry>,
     /// See <https://stackoverflow.com/a/35666246>.
-    pub visits_to_expand: usize,
+    pub visits_to_expand: u32,
     /// Exploration rate (ε) for the ε-greedy policy.
     pub exploration_rate: f64,
 }
@@ -56,9 +56,9 @@ pub struct Mcts {
 #[derive(Clone, Debug)]
 pub struct MctsNode {
     /// Move used to reach this node.
-    pub mov: Command,
+    pub mov: Move,
     /// Number of visits.
-    pub visits: usize,
+    pub visits: u32,
     /// Estimated reward.
     pub value: f64,
     /// Parent index.
@@ -69,10 +69,19 @@ pub struct MctsNode {
     pub last: usize,
 }
 
+/// Global statistics for a move across the whole tree, related to its parents.
+#[derive(Clone, Debug, Default)]
+pub struct HistoryEntry {
+    /// Number of visits.
+    pub visits: u32,
+    /// Estimated reward delta.
+    pub value: f64,
+}
+
 impl MctsNode {
     /// Creates a new node with default statistics.
     #[must_use]
-    fn new(parent: usize, mov: Command) -> Self {
+    fn new(parent: usize, mov: Move) -> Self {
         Self { mov, visits: 0, value: 0., parent, head: 0, last: 0 }
     }
 
@@ -98,10 +107,10 @@ impl Mcts {
     /// The `root_move` is an arbitrary move that represents the root of the
     /// tree.
     #[must_use]
-    pub fn new(root_move: Command) -> Self {
+    pub fn new(root_move: Move) -> Self {
         Self {
             tree: vec![MctsNode::new(Self::SENTINEL, root_move)],
-            heuristic: FxHashMap::default(),
+            history: FxHashMap::default(),
             visits_to_expand: 1,
             exploration_rate: 0.2,
         }
@@ -217,27 +226,22 @@ impl Mcts {
         }
 
         let parent_value = -self.tree[node].value;
-
         let next = head
             + epsilon_greedy_policy(
                 &self.tree[head..last],
                 self.exploration_rate,
                 rng,
                 |child| {
-                    let (relative_heuristic, heuristic_visits) =
-                        self.heuristic.get(&child.mov).copied().unwrap_or_default();
-                    let heuristic_value = parent_value + relative_heuristic;
-
-                    if heuristic_visits == 0 {
+                    let Some(entry) = self.history.get(&child.mov) else {
                         return f64::INFINITY;
-                    }
+                    };
 
-                    let t = heuristic_visits as f64;
-                    let n = child.visits as f64;
+                    let t = f64::from(entry.visits);
+                    let n = f64::from(child.visits);
 
                     let alpha = n / t;
 
-                    alpha * child.value + (1. - alpha) * heuristic_value
+                    alpha * child.value + (1. - alpha) * (parent_value + entry.value)
                 },
             );
         game.play(self.tree[next].mov);
@@ -259,7 +263,7 @@ impl Mcts {
 
         self.tree[node].visits += 1;
         self.tree[node].value +=
-            (value - self.tree[node].value) / (self.tree[node].visits as f64);
+            (value - self.tree[node].value) / f64::from(self.tree[node].visits);
 
         self.backward(self.tree[node].parent, value);
 
@@ -268,18 +272,16 @@ impl Mcts {
         }
 
         let target = {
-            let node_value = self.tree[node].value;
-            let parent_value = -self.tree[self.tree[node].parent].value;
+            let parent = self.tree[node].parent;
+            let parent_value = -self.tree[parent].value;
 
-            node_value - parent_value
+            value - parent_value
         };
 
-        let (relative_heuristic, heuristic_visits) =
-            self.heuristic.entry(self.tree[node].mov).or_default();
+        let entry = self.history.entry(self.tree[node].mov).or_default();
 
-        *heuristic_visits += 1;
-        *relative_heuristic +=
-            (target - *relative_heuristic) / (*heuristic_visits as f64);
+        entry.visits += 1;
+        entry.value += (target - entry.value) / f64::from(entry.visits);
     }
 }
 

@@ -7,19 +7,20 @@ pub mod mcts;
 use std::io::{self, BufWriter, Write};
 
 use rand::{SeedableRng, seq::IndexedRandom};
-use swift_swallow::{
-    Rng,
-    command::Command,
-    examples::setup,
-    team::TeamKey::{self, White},
-};
+use swift_swallow::examples::setup;
 use swift_swallow_rpc::{Handshake, Outcome, Play, Request};
 
-use crate::{game::Game, mcts::Mcts};
+use crate::{
+    game::{Color, Game, Move},
+    mcts::Mcts,
+};
+
+/// Pins a specific generator for portability and reproducibility.
+type Rng = rand_xoshiro::Xoshiro256PlusPlus;
 
 fn main() -> anyhow::Result<()> {
     let game_seed = 0;
-    let mut game = Game::new(setup(game_seed).unwrap(), White);
+    let mut game = Game::new(setup(game_seed).unwrap(), Color::White);
 
     let mut tx = BufWriter::new(io::stdout());
 
@@ -40,7 +41,7 @@ fn main() -> anyhow::Result<()> {
             // endregion
             // region: Game messages.
             Request::Reset(position) => {
-                game = Game::new(setup(position.seed).unwrap(), White);
+                game = Game::new(setup(position.seed).unwrap(), Color::White);
 
                 let res = ();
                 serde_json::to_writer(&mut tx, &res)?;
@@ -51,8 +52,8 @@ fn main() -> anyhow::Result<()> {
                 // TODO: Handle draws.
                 let res = match game.world.active_team() {
                     _ if !game.is_over() => None,
-                    TeamKey::White => Some(Outcome::WhiteWins),
-                    TeamKey::Black => Some(Outcome::BlackWins),
+                    Color::White => Some(Outcome::WhiteWins),
+                    Color::Black => Some(Outcome::BlackWins),
                 };
 
                 serde_json::to_writer(&mut tx, &res)?;
@@ -72,7 +73,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn search(game: &Game, max_nodes: usize, seed: u64) -> Command {
+fn search(game: &Game, max_nodes: usize, seed: u64) -> Move {
     let legal_moves = game.moves();
     assert!(!legal_moves.is_empty(), "No legal moves.");
 
@@ -81,7 +82,7 @@ fn search(game: &Game, max_nodes: usize, seed: u64) -> Command {
     }
 
     let mut rng = Rng::seed_from_u64(seed);
-    let mut mcts = Mcts::new(Command::None { team: TeamKey::Black });
+    let mut mcts = Mcts::new(Move::None { team: Color::Black });
 
     let mut nodes = 0;
 
