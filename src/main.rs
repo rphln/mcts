@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
             // endregion
             // region: Search messages.
             Request::Search(args) => {
-                let res = search(&game, args.nodes, args.seed);
+                let res = search(&game, args.nodes, args.time, args.seed);
                 serde_json::to_writer(&mut tx, &res)?;
             } // endregion
         }
@@ -73,7 +73,12 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn search(game: &Game, max_nodes: usize, seed: u64) -> Move {
+fn search(
+    game: &Game,
+    max_nodes: Option<usize>,
+    max_time: Option<u64>,
+    seed: u64,
+) -> Move {
     let legal_moves = game.moves();
     assert!(!legal_moves.is_empty(), "No legal moves.");
 
@@ -85,8 +90,11 @@ fn search(game: &Game, max_nodes: usize, seed: u64) -> Move {
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
 
     let mut nodes = 0;
+    let now = thread_time_ms();
 
-    while nodes < max_nodes {
+    while max_nodes.is_none_or(|n| nodes < n)
+        && max_time.is_none_or(|t| thread_time_ms() - now < t)
+    {
         let mut game = game.clone();
         let node = mcts.select_and_expand(&mut game, &mut rng);
 
@@ -110,4 +118,26 @@ fn search(game: &Game, max_nodes: usize, seed: u64) -> Move {
     }
 
     mcts.best_child().map(|node| node.mov).expect("`best_move` should exist")
+}
+
+/// Returns the current CPU time in nanoseconds.
+///
+/// # Panics
+///
+/// Panics if the system call to get the CPU time fails.
+fn thread_time_ms() -> u64 {
+    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+
+    unsafe {
+        assert_ne!(
+            libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &raw mut time),
+            -1,
+            "Failed to get CPU time"
+        );
+    };
+
+    let tv_sec = u64::try_from(time.tv_sec).unwrap();
+    let tv_nsec = u64::try_from(time.tv_nsec).unwrap();
+
+    tv_sec * 1_000 + tv_nsec / 1_000_000
 }
