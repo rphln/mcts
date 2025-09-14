@@ -42,9 +42,11 @@ use crate::game::{Game, Move};
 /// 5. <https://repository.falmouth.ac.uk/2782/1/MemoryLimiting.pdf>
 #[derive(Clone, Debug)]
 pub struct Mcts {
+    /// Flattened tree arena.
+    ///
     /// See <https://www.cs.cornell.edu/~asampson/blog/flattening.html>.
     pub tree: Vec<MctsNode>,
-    /// History heuristics.
+    /// Global history statistics for moves.
     pub history: FxHashMap<Move, HistoryEntry>,
     /// See <https://stackoverflow.com/a/35666246>.
     pub visits_to_expand: u32,
@@ -69,10 +71,10 @@ pub struct MctsNode {
     pub last: usize,
 }
 
-/// Global statistics for a move across the whole tree, related to its parents.
+/// Global statistics for a move across the entire tree.
 #[derive(Clone, Debug, Default)]
 pub struct HistoryEntry {
-    /// Number of visits.
+    /// Visit count.
     pub visits: u32,
     /// Estimated reward delta.
     pub value: f64,
@@ -116,41 +118,6 @@ impl Mcts {
         }
     }
 
-    /// Returns the total number of nodes in the tree.
-    #[expect(
-        clippy::len_without_is_empty,
-        reason = "The tree always contains at least the root."
-    )]
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.tree.len()
-    }
-
-    /// Returns the root node of the tree.
-    #[must_use]
-    pub fn root(&self) -> &MctsNode {
-        &self.tree[0]
-    }
-
-    /// Returns the child nodes of the root.
-    #[must_use]
-    pub fn children(&self) -> &[MctsNode] {
-        let head = self.tree[0].head;
-        let last = self.tree[0].last;
-
-        &self.tree[head..last]
-    }
-
-    /// Returns the depth of a `node`.
-    #[must_use]
-    pub fn depth(&self, node: usize) -> usize {
-        if node == 0 {
-            return 0;
-        }
-
-        1 + self.depth(self.tree[node].parent)
-    }
-
     /// Returns the best child node found so far.
     #[must_use]
     pub fn best_child(&self) -> Option<&MctsNode> {
@@ -169,8 +136,9 @@ impl Mcts {
         successors(self.tree.get(node), |node| self.tree.get(node.parent))
     }
 
-    /// Traverses the tree from the root and selects the next leaf node to
-    /// explore.
+    /// Recursively traverses the tree from the root and selects the next leaf
+    /// node to explore. Expands nodes as needed and updates the game state
+    /// along the selected path.
     ///
     /// This method allows for batched evaluation and back-propagation of the
     /// batched evaluations.
@@ -178,15 +146,15 @@ impl Mcts {
     /// # Panics
     ///
     /// Panics if there are no legal moves available during the search.
-    pub fn select_and_expand(&mut self, game: &mut Game, rng: &mut impl Rng) -> usize {
-        self.select_and_expand_node(0, game, rng)
+    pub fn expand_and_select(&mut self, game: &mut Game, rng: &mut impl Rng) -> usize {
+        self.expand_and_select_node(0, game, rng)
     }
 
     /// Traverses the tree from a given node and selects the next leaf node to
     /// explore.
     ///
     /// Internal implementation of [`Mcts::select_and_expand`].
-    pub fn select_and_expand_node(
+    pub fn expand_and_select_node(
         &mut self,
         node: usize,
         game: &mut Game,
@@ -197,57 +165,96 @@ impl Mcts {
             return node;
         }
 
-        let mut head = self.tree[node].head;
-        let mut last = self.tree[node].last;
+        if self.tree[node].is_leaf() {
+            self.expand_node(node, game, rng);
+        }
 
-        if head == last {
-            head = self.tree.len();
+        let next = self.select_node(node, rng);
+        game.play(self.tree[next].mov);
 
-            for mov in game.moves() {
-                self.tree.push(MctsNode::new(node, mov));
-            }
+        self.expand_and_select_node(next, game, rng)
+    }
 
-            last = self.tree.len();
-            assert_ne!(head, last, "No legal moves.");
+    /// Expands a leaf node by generating all legal moves.
+    ///
+    /// Extends the search upon reaching single-child nodes (i.e., states with
+    /// forced moves), as there is no decision to be made and evaluating the
+    /// next state is equivalent. See [1].
+    ///
+    /// Children are shuffled to reduce selection bias.
+    ///
+    /// # References
+    ///
+    /// [1]: https://www.chessprogramming.org/One_Reply_Extensions
+    fn expand_node(&mut self, node: usize, game: &Game, rng: &mut impl Rng) {
+        assert!(self.tree[node].is_leaf(), "`node` should be a leaf");
 
-            self.tree[node].head = head;
-            self.tree[node].last = last;
+        let head = self.tree.len();
 
-            // Shuffle to reduce ordering bias during selection.
-            self.tree[head..last].shuffle(rng);
+        for mov in game.moves() {
+            self.tree.push(MctsNode::new(node, mov));
+        }
 
-            // Advance through the non-decision nodes.
-            //
-            // See <https://www.chessprogramming.org/One_Reply_Extensions>.
-            if last - head == 1 {
-                self.tree[head].visits = self.tree[node].visits;
-                self.tree[head].value = -self.tree[node].value;
+        let last = self.tree.len();
+        assert_ne!(head, last, "No legal moves.");
+
+        self.tree[node].head = head;
+        self.tree[node].last = last;
+
+        self.tree[head..last].shuffle(rng);
+
+        if last - head == 1 {
+            self.tree[head].visits = self.tree[node].visits;
+            self.tree[head].value = -self.tree[node].value;
+        }
+    }
+
+    /// Selects a child node using an epsilon-greedy policy with history-based
+    /// weighting.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `parent` is a leaf.
+    fn select_node(&self, parent: usize, rng: &mut impl Rng) -> usize {
+        let head = self.tree[parent].head;
+        let last = self.tree[parent].last;
+
+        assert_ne!(head, last, "`parent` should not be a leaf");
+
+        if last - head == 1 {
+            return head;
+        }
+
+        if rng.random_bool(self.exploration_rate) {
+            return rng.random_range(head..last);
+        }
+
+        let parent_value = -self.tree[parent].value;
+
+        let mut best_index = 0;
+        let mut best_value = f64::NEG_INFINITY;
+
+        for index in head..last {
+            let child = &self.tree[index];
+
+            let Some(entry) = self.history.get(&child.mov) else {
+                return index;
+            };
+
+            let m = f64::from(entry.visits);
+            let n = f64::from(child.visits);
+
+            let alpha = f64::sqrt(n / (n + m)); // Found empirically.
+            let value =
+                alpha * child.value + (1. - alpha) * (parent_value + entry.value);
+
+            if value > best_value {
+                best_index = index;
+                best_value = value;
             }
         }
 
-        let parent_value = -self.tree[node].value;
-        let next = head
-            + epsilon_greedy_policy(
-                &self.tree[head..last],
-                self.exploration_rate,
-                rng,
-                |child| {
-                    let Some(entry) = self.history.get(&child.mov) else {
-                        return f64::INFINITY;
-                    };
-
-                    let m = f64::from(entry.visits);
-                    let n = f64::from(child.visits);
-
-                    // Found through trial-and-error.
-                    let alpha = f64::sqrt(n / (n + m));
-
-                    alpha * child.value + (1. - alpha) * (parent_value + entry.value)
-                },
-            );
-        game.play(self.tree[next].mov);
-
-        self.select_and_expand_node(next, game, rng)
+        best_index
     }
 
     /// Back-propagates the reward from a leaf node up to the root.
@@ -284,34 +291,4 @@ impl Mcts {
         entry.visits += 1;
         entry.value += (target - entry.value) / f64::from(entry.visits);
     }
-}
-
-fn epsilon_greedy_policy(
-    nodes: &[MctsNode],
-    exploration_rate: f64,
-    rng: &mut impl Rng,
-    evaluate: impl Fn(&MctsNode) -> f64,
-) -> usize {
-    assert!(!nodes.is_empty(), "`nodes` must be non-empty.");
-
-    if nodes.len() == 1 {
-        return 0;
-    }
-
-    if rng.random_bool(exploration_rate) {
-        return rng.random_range(0..nodes.len());
-    }
-
-    let mut best_index = 0;
-    let mut best_value = f64::NEG_INFINITY;
-
-    for (index, node) in nodes.iter().enumerate() {
-        let value = evaluate(node);
-        if value > best_value {
-            best_index = index;
-            best_value = value;
-        }
-    }
-
-    best_index
 }

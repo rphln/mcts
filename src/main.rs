@@ -96,9 +96,11 @@ fn search(
         && max_time.is_none_or(|t| thread_time_ms() - now < t)
     {
         let mut game = game.clone();
-        let node = mcts.select_and_expand(&mut game, &mut rng);
+        let node = mcts.expand_and_select(&mut game, &mut rng);
 
-        nodes += mcts.depth(node);
+        // Ignore the root (which is not played) in the counting.
+        let depth = mcts.ancestors(node).count() - 1;
+        nodes += depth;
 
         // See <https://www.sciencedirect.com/science/article/pii/S0304397516302717>.
         for _ in 0..2 {
