@@ -1,6 +1,6 @@
 use std::iter::successors;
 
-use rand::{Rng, seq::SliceRandom};
+use rand::prelude::*;
 use rustc_hash::FxHashMap;
 
 use crate::game::{Game, Move};
@@ -42,12 +42,10 @@ use crate::game::{Game, Move};
 /// 5. <https://repository.falmouth.ac.uk/2782/1/MemoryLimiting.pdf>
 #[derive(Clone, Debug)]
 pub struct Mcts {
-    /// Flattened tree arena.
-    ///
     /// See <https://www.cs.cornell.edu/~asampson/blog/flattening.html>.
-    pub tree: Vec<MctsNode>,
+    pub tree: Vec<Node>,
     /// Global history statistics for moves.
-    pub history: FxHashMap<Move, HistoryEntry>,
+    pub history: FxHashMap<Move, History>,
     /// See <https://stackoverflow.com/a/35666246>.
     pub visits_to_expand: u32,
     /// Exploration rate (ε) for the ε-greedy policy.
@@ -56,7 +54,7 @@ pub struct Mcts {
 
 /// Statistics for a single ply in the game tree.
 #[derive(Clone, Debug)]
-pub struct MctsNode {
+pub struct Node {
     /// Move used to reach this node.
     pub mov: Move,
     /// Number of visits.
@@ -73,37 +71,37 @@ pub struct MctsNode {
 
 /// Global statistics for a move across the entire tree.
 #[derive(Clone, Debug, Default)]
-pub struct HistoryEntry {
+pub struct History {
     /// Visit count.
     pub visits: u32,
     /// Estimated reward delta.
     pub value: f64,
 }
 
-impl MctsNode {
+/// Placeholder for an unset node index.
+const SENTINEL: usize = !0;
+
+impl Node {
     /// Creates a new node with default statistics.
     #[must_use]
     fn new(parent: usize, mov: Move) -> Self {
-        Self { mov, visits: 0, value: 0., parent, head: 0, last: 0 }
+        Self { mov, visits: 0, value: 0., parent, head: SENTINEL, last: SENTINEL }
     }
 
     /// Returns whether this node is the root node.
     #[must_use]
     pub fn is_root(&self) -> bool {
-        self.parent == Mcts::SENTINEL
+        self.parent == SENTINEL
     }
 
     /// Returns whether this node is a leaf.
     #[must_use]
     pub fn is_leaf(&self) -> bool {
-        self.head == self.last
+        self.head == SENTINEL
     }
 }
 
 impl Mcts {
-    /// Sentinel for the root's parent.
-    const SENTINEL: usize = usize::MAX;
-
     /// Creates a new Monte Carlo Tree Search instance.
     ///
     /// The `root_move` is an arbitrary move that represents the root of the
@@ -111,28 +109,22 @@ impl Mcts {
     #[must_use]
     pub fn new(root_move: Move) -> Self {
         Self {
-            tree: vec![MctsNode::new(Self::SENTINEL, root_move)],
+            tree: vec![Node::new(SENTINEL, root_move)],
             history: FxHashMap::default(),
             visits_to_expand: 1,
             exploration_rate: 0.2,
         }
     }
 
-    /// Returns the best child node found so far.
-    #[must_use]
-    pub fn best_child(&self) -> Option<&MctsNode> {
-        self.principal_variation().nth(1)
-    }
-
     /// Returns an iterator over the sequence of best moves found so far.
-    pub fn principal_variation(&self) -> impl Iterator<Item = &MctsNode> {
+    pub fn principal_variation(&self) -> impl Iterator<Item = &Node> {
         successors(self.tree.first(), |parent| {
             self.tree[parent.head..parent.last].iter().max_by_key(|node| node.visits)
         })
     }
 
     /// Returns an iterator over the ancestors of `node`, starting at `node`.
-    pub fn ancestors(&self, node: usize) -> impl Iterator<Item = &MctsNode> {
+    pub fn ancestors(&self, node: usize) -> impl Iterator<Item = &Node> {
         successors(self.tree.get(node), |node| self.tree.get(node.parent))
     }
 
@@ -192,7 +184,7 @@ impl Mcts {
         let head = self.tree.len();
 
         for mov in game.moves() {
-            self.tree.push(MctsNode::new(node, mov));
+            self.tree.push(Node::new(node, mov));
         }
 
         let last = self.tree.len();
@@ -262,7 +254,7 @@ impl Mcts {
     /// Rewards must be provided from the perspective of the side moving at the
     /// leaf.
     pub fn backward(&mut self, node: usize, value: f64) {
-        if node == Self::SENTINEL {
+        if node == SENTINEL {
             return;
         }
 
@@ -291,4 +283,140 @@ impl Mcts {
         entry.visits += 1;
         entry.value += (target - entry.value) / f64::from(entry.visits);
     }
+
+    /// Searches from `node` until one of `max_time`, `max_iters` or `max_nodes`
+    /// is reached.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there are no legal moves available during the search, which
+    /// represents a bug in either the MCTS or the game logic.
+    pub fn search(
+        &mut self,
+        node: usize,
+        game: &Game,
+        rng: &mut impl Rng,
+        max_time: Option<u64>,
+        max_iters: Option<u32>,
+        max_nodes: Option<usize>,
+    ) -> usize {
+        let mut iters = 0;
+        let mut nodes = 0;
+
+        let now = thread_time_ms();
+        let root_depth = self.ancestors(node).count();
+
+        while max_time.is_none_or(|t| thread_time_ms() - now < t)
+            && max_iters.is_none_or(|n| iters < n)
+            && max_nodes.is_none_or(|n| nodes < n)
+        {
+            iters += 1;
+
+            let mut game = game.clone();
+            let next = self.expand_and_select_node(node, &mut game, rng);
+
+            // Ignore the root (which is not played) in the counting.
+            let depth = self.ancestors(next).count() - root_depth;
+            nodes += depth;
+
+            // See <https://www.sciencedirect.com/science/article/pii/S0304397516302717>.
+            for _ in 0..2 {
+                if game.is_over() {
+                    break;
+                }
+
+                let &mov =
+                    game.moves().choose(rng).expect("`moves` should be non-empty");
+                game.play(mov);
+
+                nodes += 1;
+            }
+
+            let reward = game.evaluate();
+            self.backward(next, reward);
+
+            // We need a better heuristic for when to GC.
+            #[cfg(false)]
+            if iters.is_power_of_two() {
+                let threshold = iters.isqrt();
+                self.gc(|node| node.visits < threshold);
+            }
+        }
+
+        let head = self.tree[node].head;
+        let last = self.tree[node].last;
+
+        (head..last)
+            .max_by_key(|&next| self.tree[next].visits)
+            .expect("`head..last` should be non-empty")
+    }
+
+    /// Removes parent nodes that satisfy `predicate`.
+    pub fn gc(&mut self, pred: impl Fn(&Node) -> bool) {
+        let len = self.tree.len();
+
+        let mut map = vec![SENTINEL; len];
+        let mut dst = 0;
+
+        // Invariant: always keep the root. Removing it would break the tree.
+        map[0] = 0;
+        dst += 1;
+
+        for src in 1..len {
+            let node = &self.tree[src];
+            let parent = &self.tree[node.parent];
+
+            if map[node.parent] == SENTINEL || pred(parent) {
+                continue;
+            }
+
+            map[src] = dst;
+            dst += 1;
+        }
+
+        for src in 0..len {
+            let dst = map[src];
+            if dst == SENTINEL {
+                continue;
+            }
+
+            assert!(dst <= src);
+            self.tree.swap(src, dst);
+
+            let node = &mut self.tree[dst];
+
+            if !node.is_root() {
+                node.parent = map[node.parent];
+            }
+
+            if !node.is_leaf() {
+                node.last = map[node.head].saturating_add(node.last - node.head);
+                node.head = map[node.head];
+            }
+        }
+
+        self.tree.truncate(dst);
+    }
+}
+
+/// Returns the current CPU time in nanoseconds.
+///
+/// # Panics
+///
+/// Panics if the system call to get the CPU time fails.
+fn thread_time_ms() -> u64 {
+    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+
+    unsafe {
+        assert_ne!(
+            libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &raw mut time),
+            -1,
+            "Failed to get CPU time"
+        );
+    };
+
+    let tv_sec = u64::try_from(time.tv_sec).unwrap();
+    let tv_nsec = u64::try_from(time.tv_nsec).unwrap();
+
+    tv_sec * 1_000 + tv_nsec / 1_000_000
 }
