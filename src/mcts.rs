@@ -112,7 +112,7 @@ impl Mcts {
             tree: vec![Node::new(SENTINEL, root_move)],
             history: FxHashMap::default(),
             visits_to_expand: 1,
-            exploration_rate: 0.2,
+            exploration_rate: 0.1,
         }
     }
 
