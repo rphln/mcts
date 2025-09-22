@@ -35,7 +35,7 @@ pub fn main() -> anyhow::Result<()> {
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
 
     let root = 0;
-    let next = mcts.search(
+    let _next = mcts.search(
         root,
         &game,
         &mut rng,
@@ -43,9 +43,6 @@ pub fn main() -> anyhow::Result<()> {
         args.max_iters,
         args.max_nodes,
     );
-
-    let threshold = mcts.tree[next].visits.isqrt();
-    mcts.gc(|node| node.visits < threshold);
 
     let mut file = File::create("public_html/index.html")?;
     tree_to_html(&mcts, &mut file)?;
@@ -56,6 +53,12 @@ pub fn main() -> anyhow::Result<()> {
 // region: Plotting.
 
 fn tree_to_html(mcts: &Mcts, w: &mut impl Write) -> anyhow::Result<()> {
+    let mut visits: Vec<u32> = mcts.tree.iter().map(|node| node.visits).collect();
+    visits.sort_unstable();
+
+    let top_n = visits.len().saturating_sub(30_000);
+    let min_visits = visits[top_n];
+
     let max =
         mcts.tree.iter().fold(0., |max, node| f64::max(max, f64::abs(node.value)));
     let min = -max;
@@ -74,7 +77,7 @@ fn tree_to_html(mcts: &Mcts, w: &mut impl Write) -> anyhow::Result<()> {
     writeln!(w, r"  </head>")?;
     writeln!(w, r"  <body>")?;
 
-    node_to_html(0, mcts, min, max, w)?;
+    node_to_html(0, mcts, min_visits, min, max, w)?;
 
     writeln!(w, r"  </body>")?;
     writeln!(w, r"</html>")?;
@@ -85,12 +88,13 @@ fn tree_to_html(mcts: &Mcts, w: &mut impl Write) -> anyhow::Result<()> {
 fn node_to_html(
     node: usize,
     mcts: &Mcts,
+    min_visits: u32,
     min: f64,
     max: f64,
     w: &mut impl Write,
 ) -> anyhow::Result<()> {
     let node = &mcts.tree[node];
-    if node.visits == 0 {
+    if node.visits < min_visits {
         return Ok(());
     }
 
@@ -107,14 +111,14 @@ fn node_to_html(
         100. * f64::from(node.visits) / f64::from(parent.visits)
     };
 
-    writeln!(w, r#"<div class="node" style="--width: {width:.6}%">"#)?;
-    writeln!(w, r#"  <div class="bar" style="--value: {value:.6}" title="{label}">"#)?;
+    writeln!(w, r#"<div class="node" style="--width: {width:.3}%">"#)?;
+    writeln!(w, r#"  <div class="bar" style="--value: {value:.3}" title="{label}">"#)?;
     writeln!(w, r#"    <span class="label">{label}</span>"#)?;
     writeln!(w, r"  </div>")?;
     writeln!(w, r#"  <div class="children">"#)?;
 
     for child in children {
-        node_to_html(child, mcts, min, max, w)?;
+        node_to_html(child, mcts, min_visits, min, max, w)?;
     }
 
     writeln!(w, r"  </div>")?;
@@ -123,39 +127,42 @@ fn node_to_html(
     Ok(())
 }
 
+// endregion
+// region: Move labeling.
+
 const CHARACTER: [&str; 6] = [
-    "⚪ Vanguard",
-    "⚫ Vanguard",
-    "⚪ Scholar",
-    "⚫ Scholar",
-    "⚪ Marksman",
-    "⚫ Marksman",
+    "Vanguard ⚪",
+    "Vanguard ⚫",
+    "Scholar ⚪",
+    "Scholar ⚫",
+    "Marksman ⚪",
+    "Marksman ⚫",
 ];
 const ACTION: [&str; 24] = [
-    "⚪ Onslaught",
-    "⚫ Onslaught",
-    "⚪ Unmend",
-    "⚫ Unmend",
-    "⚪ Grit",
-    "⚫ Grit",
-    "⚪ Fang and Claw",
-    "⚫ Fang and Claw",
-    "⚪ Ruin",
-    "⚫ Ruin",
-    "⚪ Adloquium",
-    "⚫ Adloquium",
-    "⚪ Deployment Tactics",
-    "⚫ Deployment Tactics",
-    "⚪ Emergency Tactics",
-    "⚫ Emergency Tactics",
-    "⚪ Bloodletter",
-    "⚫ Bloodletter",
-    "⚪ Sidewinder",
-    "⚫ Sidewinder",
-    "⚪ Lock and Load",
-    "⚫ Lock and Load",
-    "⚪ Iron Jaws",
-    "⚫ Iron Jaws",
+    "Onslaught ⚪",
+    "Onslaught ⚫",
+    "Unmend ⚪",
+    "Unmend ⚫",
+    "Grit ⚪",
+    "Grit ⚫",
+    "Fang and Claw ⚪",
+    "Fang and Claw ⚫",
+    "Ruin ⚪",
+    "Ruin ⚫",
+    "Adloquium ⚪",
+    "Adloquium ⚫",
+    "Deployment Tactics ⚪",
+    "Deployment Tactics ⚫",
+    "Emergency Tactics ⚪",
+    "Emergency Tactics ⚫",
+    "Bloodletter ⚪",
+    "Bloodletter ⚫",
+    "Sidewinder ⚪",
+    "Sidewinder ⚫",
+    "Lock and Load ⚪",
+    "Lock and Load ⚫",
+    "Iron Jaws ⚪",
+    "Iron Jaws ⚫",
 ];
 
 fn label(mov: &Move) -> String {
@@ -175,22 +182,29 @@ fn label(mov: &Move) -> String {
             } else if can_act || can_move {
                 "❗"
             } else {
-                ""
+                "⌛"
             };
 
-            format!("{color} Pass {marker}")
+            format!("{marker} Pass {color}")
         }
         Move::Movement { character, destination } => {
             format!(
-                "{label} → ⟨{x}, {y}⟩",
+                "🧭 {label} → ⟨{x}, {y}⟩",
                 label = CHARACTER[character.0],
                 x = destination.x,
                 y = destination.y,
             )
         }
-        Move::Action { action, destination } => {
+        Move::Action { action, target_hint: Some(target), .. } => {
             format!(
-                "{label} → ⟨{x}, {y}⟩",
+                "🎯 {label} → {target}",
+                label = ACTION[action.0],
+                target = CHARACTER[target.0],
+            )
+        }
+        Move::Action { action, destination, .. } => {
+            format!(
+                "🎯 {label} → ⟨{x}, {y}⟩",
                 label = ACTION[action.0],
                 x = destination.x,
                 y = destination.y,
