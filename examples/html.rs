@@ -171,12 +171,7 @@ fn label(mov: &Move) -> String {
             Color::White => "⚪".to_owned(),
             Color::Black => "⚫".to_owned(),
         },
-        &Move::Pass { team, can_act, can_move } => {
-            let color = match team {
-                Color::White => "⚪",
-                Color::Black => "⚫",
-            };
-
+        &Move::Pass { character, can_act, can_move } => {
             let marker = if can_act && can_move {
                 "‼️"
             } else if can_act || can_move {
@@ -185,14 +180,14 @@ fn label(mov: &Move) -> String {
                 "⌛"
             };
 
-            format!("{marker} Pass {color}")
+            format!("{marker} {label} → Pass", label = CHARACTER[character.0])
         }
         Move::Movement { character, destination } => {
             format!(
                 "🧭 {label} → ⟨{x}, {y}⟩",
                 label = CHARACTER[character.0],
-                x = destination.x,
-                y = destination.y,
+                x = destination.q,
+                y = destination.r,
             )
         }
         Move::Action { action, target_hint: Some(target), .. } => {
@@ -206,8 +201,8 @@ fn label(mov: &Move) -> String {
             format!(
                 "🎯 {label} → ⟨{x}, {y}⟩",
                 label = ACTION[action.0],
-                x = destination.x,
-                y = destination.y,
+                x = destination.q,
+                y = destination.r,
             )
         }
     }
