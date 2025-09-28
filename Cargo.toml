@@ -3,6 +3,9 @@ name = "swift_swallow_tree_search"
 version = "0.1.0"
 edition = "2024"
 
+[lints]
+workspace = true
+
 [dependencies]
 swift_swallow.workspace = true
 swift_swallow_rpc.workspace = true

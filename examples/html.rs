@@ -1,6 +1,3 @@
-#![deny(clippy::all)]
-#![warn(clippy::pedantic)]
-
 use std::{cmp::Reverse, fs::File, io::Write};
 
 use clap::Parser;
