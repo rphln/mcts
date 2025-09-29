@@ -183,8 +183,8 @@ fn label(mov: &Move) -> String {
             format!(
                 "🧭 {label} → ⟨{x}, {y}⟩",
                 label = CHARACTER[character.0],
-                x = destination.x,
-                y = destination.y,
+                x = destination.q,
+                y = destination.r,
             )
         }
         Move::Action { action, target_hint: Some(target), .. } => {
@@ -198,8 +198,8 @@ fn label(mov: &Move) -> String {
             format!(
                 "🎯 {label} → ⟨{x}, {y}⟩",
                 label = ACTION[action.0],
-                x = destination.x,
-                y = destination.y,
+                x = destination.q,
+                y = destination.r,
             )
         }
     }
