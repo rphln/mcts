@@ -4,7 +4,7 @@ use rand::prelude::*;
 use swift_swallow::examples::setup;
 use swift_swallow_rpc::{Handshake, Outcome, Request, Search};
 use swift_swallow_tree_search::{
-    Rng,
+    DefaultRng,
     game::{Color, Game, Move},
     mcts::Mcts,
 };
@@ -68,7 +68,7 @@ pub fn search(game: &Game, args: &Search) -> Move {
         return legal_moves[0];
     }
 
-    let mut rng = Rng::seed_from_u64(args.seed);
+    let mut rng = DefaultRng::seed_from_u64(args.seed);
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
 
     let next = mcts.search(0, game, &mut rng, args.time, args.iters, args.nodes);

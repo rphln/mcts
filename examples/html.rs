@@ -4,7 +4,7 @@ use clap::Parser;
 use rand::prelude::*;
 use swift_swallow::examples::setup;
 use swift_swallow_tree_search::{
-    Rng,
+    DefaultRng,
     game::{Color, Game, Move},
     mcts::Mcts,
 };
@@ -28,7 +28,7 @@ pub fn main() -> anyhow::Result<()> {
     let game_seed = args.seed;
     let game = Game::new(setup(game_seed).unwrap(), Color::White);
 
-    let mut rng = Rng::seed_from_u64(args.seed);
+    let mut rng = DefaultRng::seed_from_u64(args.seed);
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
 
     let root = 0;
