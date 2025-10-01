@@ -136,14 +136,14 @@ const CHARACTER: [&str; 6] = [
     "Marksman ⚫",
 ];
 const ACTION: [&str; 24] = [
-    "Onslaught ⚪",
-    "Onslaught ⚫",
+    "Heavy Swing ⚪",
+    "Heavy Swing ⚫",
+    "Iron Will ⚪",
+    "Iron Will ⚫",
     "Unmend ⚪",
     "Unmend ⚫",
     "Grit ⚪",
     "Grit ⚫",
-    "Fang and Claw ⚪",
-    "Fang and Claw ⚫",
     "Ruin ⚪",
     "Ruin ⚫",
     "Adloquium ⚪",
@@ -156,8 +156,8 @@ const ACTION: [&str; 24] = [
     "Bloodletter ⚫",
     "Sidewinder ⚪",
     "Sidewinder ⚫",
-    "Lock and Load ⚪",
-    "Lock and Load ⚫",
+    "Fang and Claw ⚪",
+    "Fang and Claw ⚫",
     "Iron Jaws ⚪",
     "Iron Jaws ⚫",
 ];
@@ -168,16 +168,8 @@ fn label(mov: &Move) -> String {
             Color::White => "⚪".to_owned(),
             Color::Black => "⚫".to_owned(),
         },
-        &Move::Pass { character, can_act, can_move } => {
-            let marker = if can_act && can_move {
-                "‼️"
-            } else if can_act || can_move {
-                "❗"
-            } else {
-                "⌛"
-            };
-
-            format!("{marker} {label} → Pass", label = CHARACTER[character.0])
+        Move::Pass { character } => {
+            format!("⌛ {label} → Pass", label = CHARACTER[character.0])
         }
         Move::Movement { character, destination } => {
             format!(
