@@ -135,7 +135,7 @@ const CHARACTER: [&str; 6] = [
     "Marksman ⚪",
     "Marksman ⚫",
 ];
-const ACTION: [&str; 24] = [
+const ACTION: [&str; 34] = [
     "Heavy Swing ⚪",
     "Heavy Swing ⚫",
     "Iron Will ⚪",
@@ -144,6 +144,10 @@ const ACTION: [&str; 24] = [
     "Unmend ⚫",
     "Grit ⚪",
     "Grit ⚫",
+    "Wallop ⚪",
+    "Wallop ⚫",
+    "Impervious ⚪",
+    "Impervious ⚫",
     "Ruin ⚪",
     "Ruin ⚫",
     "Adloquium ⚪",
@@ -152,14 +156,20 @@ const ACTION: [&str; 24] = [
     "Deployment Tactics ⚫",
     "Emergency Tactics ⚪",
     "Emergency Tactics ⚫",
+    "Reinforced Body ⚪",
+    "Reinforced Body ⚫",
+    "Turbo ⚪",
+    "Turbo ⚫",
     "Bloodletter ⚪",
     "Bloodletter ⚫",
     "Sidewinder ⚪",
     "Sidewinder ⚫",
-    "Fang and Claw ⚪",
-    "Fang and Claw ⚫",
+    "Flex ⚪",
+    "Flex ⚫",
     "Iron Jaws ⚪",
     "Iron Jaws ⚫",
+    "Whirlwind ⚪",
+    "Whirlwind ⚫",
 ];
 
 fn label(mov: &Move) -> String {
