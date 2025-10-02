@@ -1,3 +1,5 @@
+use std::cmp;
+
 use swift_swallow::{
     command::Command,
     content::game,
@@ -55,7 +57,12 @@ impl Game {
 
         for character in &self.world.characters {
             let health = f64::from(character.current_effective_health());
-            let points = health.sqrt();
+            let energy = f64::from(cmp::min(
+                character.maximum_action_points,
+                character.current_action_points + 4,
+            ));
+
+            let points = (64. * health + 8. * energy).sqrt();
 
             if character.team == self.color {
                 max += points;
