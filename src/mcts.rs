@@ -223,7 +223,7 @@ impl Mcts {
 
         let parent_value = -self.tree[parent].value;
 
-        let mut best_index = 0;
+        let mut best_index = SENTINEL;
         let mut best_value = f64::NEG_INFINITY;
 
         for index in head..last {
@@ -239,12 +239,15 @@ impl Mcts {
             let alpha = f64::sqrt(n / (n + m)); // Found empirically.
             let value =
                 alpha * child.value + (1. - alpha) * (parent_value + entry.value);
+            assert!(!value.is_nan(), "`value` should be comparable");
 
             if value > best_value {
                 best_index = index;
                 best_value = value;
             }
         }
+
+        assert_ne!(best_index, SENTINEL, "`best_index` should be set");
 
         best_index
     }
