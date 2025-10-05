@@ -50,14 +50,20 @@ pub fn main() -> anyhow::Result<()> {
 // region: Plotting.
 
 fn tree_to_html(mcts: &Mcts, w: &mut impl Write) -> anyhow::Result<()> {
-    let mut visits: Vec<u32> = mcts.tree.iter().map(|node| node.visits).collect();
-    visits.sort_unstable();
+    let max_depth = 48;
+    let min_visits = {
+        let mut visits: Vec<u32> = mcts.tree.iter().map(|node| node.visits).collect();
+        visits.sort_unstable();
 
-    let top_n = visits.len().saturating_sub(30_000);
-    let min_visits = visits[top_n];
+        let top_n = visits.len().saturating_sub(30_000);
+        visits[top_n]
+    };
 
-    let max =
-        mcts.tree.iter().fold(0., |max, node| f64::max(max, f64::abs(node.value)));
+    let max = mcts
+        .tree
+        .iter()
+        .filter(|node| node.visits >= min_visits)
+        .fold(0., |max, node| f64::max(max, f64::abs(node.value)));
     let min = -max;
 
     writeln!(w, r"<!doctype html>")?;
@@ -74,7 +80,7 @@ fn tree_to_html(mcts: &Mcts, w: &mut impl Write) -> anyhow::Result<()> {
     writeln!(w, r"  </head>")?;
     writeln!(w, r"  <body>")?;
 
-    node_to_html(0, mcts, min_visits, min, max, w)?;
+    node_to_html(0, mcts, max_depth, min_visits, min, max, w)?;
 
     writeln!(w, r"  </body>")?;
     writeln!(w, r"</html>")?;
@@ -85,17 +91,23 @@ fn tree_to_html(mcts: &Mcts, w: &mut impl Write) -> anyhow::Result<()> {
 fn node_to_html(
     node: usize,
     mcts: &Mcts,
+    max_depth: usize,
     min_visits: u32,
     min: f64,
     max: f64,
     w: &mut impl Write,
 ) -> anyhow::Result<()> {
     let node = &mcts.tree[node];
-    if node.visits < min_visits {
+    if max_depth == 0 || node.visits < min_visits {
         return Ok(());
     }
 
     let mut children: Vec<usize> = (node.head..node.last).collect();
+    if matches!(mcts.tree[children[0]].mov, Move::None { .. }) {
+        let next = &mcts.tree[children[0]];
+        children = (next.head..next.last).collect();
+    }
+
     children.sort_by_key(|&idx| Reverse(mcts.tree[idx].visits));
 
     let label = label(&node.mov);
@@ -108,14 +120,20 @@ fn node_to_html(
         100. * f64::from(node.visits) / f64::from(parent.visits)
     };
 
+    let title = format!(
+        r"{label}&#10;Visits: {visits}&#10;Value: {value:.3}",
+        visits = node.visits,
+        value = node.value
+    );
+
     writeln!(w, r#"<div class="node" style="--width: {width:.3}%">"#)?;
-    writeln!(w, r#"  <div class="bar" style="--value: {value:.3}" title="{label}">"#)?;
+    writeln!(w, r#"  <div class="bar" style="--value: {value:.3}" title="{title}">"#)?;
     writeln!(w, r#"    <span class="label">{label}</span>"#)?;
     writeln!(w, r"  </div>")?;
     writeln!(w, r#"  <div class="children">"#)?;
 
     for child in children {
-        node_to_html(child, mcts, min_visits, min, max, w)?;
+        node_to_html(child, mcts, max_depth - 1, min_visits, min, max, w)?;
     }
 
     writeln!(w, r"  </div>")?;
