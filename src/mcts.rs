@@ -236,7 +236,11 @@ impl Mcts {
             let m = f64::from(entry.visits);
             let n = f64::from(child.visits);
 
-            let alpha = f64::sqrt(n / (n + m)); // Found empirically.
+            // Found empirically. See Section 8.4.2 in [1] for other schedules.
+            //
+            // [1]: <https://papersdb.cs.ualberta.ca/~papersdb/uploaded_files/1029/paper_thesis.pdf>
+            let alpha = f64::sqrt(n / (n + m));
+
             let value =
                 alpha * child.value + (1. - alpha) * (parent_value + entry.value);
             assert!(!value.is_nan(), "`value` should be comparable");
