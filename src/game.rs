@@ -1,5 +1,3 @@
-use std::cmp::{max, min};
-
 use swift_swallow::{
     command::Command,
     content::game,
@@ -52,41 +50,20 @@ impl Game {
 
     #[must_use]
     pub fn evaluate(&self) -> f64 {
-        /// How much health a point of energy is worth, on average.
-        const K: f64 = 8.;
-
-        let mut max_score = 0.;
-        let mut min_score = 0.;
+        let mut max = 0.;
+        let mut min = 0.;
 
         for character in &self.world.characters {
-            if character.is_defeated() {
-                continue;
-            }
-
-            let turn_health = f64::from({
-                let health = character.current_health();
-
-                let block = character.block;
-                let poison = max(character.markers.poison_until - self.world.round, 0);
-
-                let turn_health = min(health + block, health - poison);
-                max(turn_health, 0)
-            });
-
-            let turn_energy = f64::from(min(
-                character.maximum_action_points,
-                character.current_action_points + 4,
-            ));
-
-            let points = (turn_health + K * turn_energy).sqrt();
+            let health = f64::from(character.current_health());
+            let score = f64::sqrt(health);
 
             if character.team == self.color {
-                max_score += points;
+                max += score;
             } else {
-                min_score += points;
+                min += score;
             }
         }
 
-        max_score - min_score
+        max - min
     }
 }
