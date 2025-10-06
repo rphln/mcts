@@ -103,11 +103,6 @@ fn node_to_html(
     }
 
     let mut children: Vec<usize> = (node.head..node.last).collect();
-    if matches!(mcts.tree[children[0]].mov, Move::None { .. }) {
-        let next = &mcts.tree[children[0]];
-        children = (next.head..next.last).collect();
-    }
-
     children.sort_by_key(|&idx| Reverse(mcts.tree[idx].visits));
 
     let label = label(&node.mov);
