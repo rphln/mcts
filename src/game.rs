@@ -54,8 +54,12 @@ impl Game {
         let mut min = 0.;
 
         for character in &self.world.characters {
+            if character.is_defeated() {
+                continue;
+            }
+
             let health = f64::from(character.current_health());
-            let score = f64::sqrt(health);
+            let score = f64::sqrt(64. * health);
 
             if character.team == self.color {
                 max += score;
