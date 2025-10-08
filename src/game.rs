@@ -15,6 +15,8 @@ pub struct Game {
     /// Fake turn counter to make the game alternate between sides on every
     /// move without the underlying [`world::World`] being aware of it.
     pub color: Color,
+    /// Counter for the total number of moves played in the game.
+    pub depth: usize,
 }
 
 impl Game {
@@ -23,7 +25,7 @@ impl Game {
         let rules = game();
         start(&rules, &mut world).unwrap();
 
-        Self { world, color }
+        Self { world, color, depth: 0 }
     }
 
     #[must_use]
@@ -46,6 +48,7 @@ impl Game {
         let _decide = decide(mov, &rules, &mut self.world).unwrap();
 
         self.color = !self.color;
+        self.depth += 1;
     }
 
     #[must_use]

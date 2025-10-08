@@ -311,20 +311,14 @@ impl Mcts {
         let mut nodes = 0;
 
         let now = thread_time_ms();
-        let root_depth = self.ancestors(node).count();
+        let root_depth = game.depth;
 
         while max_time.is_none_or(|t| thread_time_ms() - now < t)
             && max_iters.is_none_or(|n| iters < n)
             && max_nodes.is_none_or(|n| nodes < n)
         {
-            iters += 1;
-
             let mut game = game.clone();
             let next = self.expand_and_select_node(node, &mut game, rng);
-
-            // Ignore the root (which is not played) in the counting.
-            let depth = self.ancestors(next).count() - root_depth;
-            nodes += depth;
 
             // See <https://www.sciencedirect.com/science/article/pii/S0304397516302717>.
             for _ in 0..2 {
@@ -335,8 +329,6 @@ impl Mcts {
                 let &mov =
                     game.moves().choose(rng).expect("`moves` should be non-empty");
                 game.play(mov);
-
-                nodes += 1;
             }
 
             let reward = game.evaluate();
@@ -348,6 +340,9 @@ impl Mcts {
                 let threshold = iters.isqrt();
                 self.gc(|node| node.visits < threshold);
             }
+
+            iters += 1;
+            nodes += game.depth - root_depth;
         }
 
         let head = self.tree[node].head;
