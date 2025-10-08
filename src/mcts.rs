@@ -334,13 +334,6 @@ impl Mcts {
             let reward = game.evaluate();
             self.backward(next, reward);
 
-            // We need a better heuristic for when to GC.
-            #[cfg(false)]
-            if iters.is_power_of_two() {
-                let threshold = iters.isqrt();
-                self.gc(|node| node.visits < threshold);
-            }
-
             iters += 1;
             nodes += game.depth - root_depth;
         }
