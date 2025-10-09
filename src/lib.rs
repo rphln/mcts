@@ -1,4 +1,5 @@
 #![feature(assert_matches)]
+#![feature(explicit_tail_calls)]
 
 pub mod game;
 pub mod mcts;

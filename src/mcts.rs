@@ -164,7 +164,7 @@ impl Mcts {
         let next = self.select_node(node, rng);
         game.play(self.tree[next].mov);
 
-        self.expand_and_select_node(next, game, rng)
+        become self.expand_and_select_node(next, game, rng);
     }
 
     /// Expands a leaf node by generating all legal moves.
@@ -273,7 +273,7 @@ impl Mcts {
         history.value += (value - history.value) / f64::from(history.visits);
 
         let parent = entry.parent;
-        self.backward(parent, value);
+        become self.backward(parent, value);
     }
 
     /// Searches from `node` until one of `max_time`, `max_iters` or `max_nodes`
