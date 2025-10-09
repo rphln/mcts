@@ -1,4 +1,4 @@
-use std::iter::successors;
+use std::{assert_matches::assert_matches, iter::successors};
 
 use rand::prelude::*;
 use rustc_hash::FxHashMap;
@@ -72,9 +72,9 @@ pub struct Node {
 /// Global statistics for a move across the entire tree.
 #[derive(Clone, Default, Debug)]
 pub struct History {
-    /// Visit count.
+    /// Number of visits.
     pub visits: u32,
-    /// Estimated reward delta.
+    /// Estimated reward.
     pub value: f64,
 }
 
@@ -221,30 +221,25 @@ impl Mcts {
             return rng.random_range(head..last);
         }
 
-        let parent_value = -self.tree[parent].value;
-
         let mut best_index = SENTINEL;
         let mut best_value = f64::NEG_INFINITY;
 
         for index in head..last {
-            let child = &self.tree[index];
-
-            let Some(entry) = self.history.get(&child.mov) else {
+            let entry = &self.tree[index];
+            let Some(history) = self.history.get(&entry.mov) else {
                 return index;
             };
 
-            let m = f64::from(entry.visits);
-            let n = f64::from(child.visits);
+            let m = f64::from(history.visits);
+            let n = f64::from(entry.visits);
 
             // Found empirically. See Section 8.4.2 in [1] for other schedules.
             //
             // [1]: <https://papersdb.cs.ualberta.ca/~papersdb/uploaded_files/1029/paper_thesis.pdf>
             let alpha = f64::sqrt(n / (n + m));
+            assert_matches!(alpha, 0.0..=1.0, "`alpha` should be in [0, 1]");
 
-            let value =
-                alpha * child.value + (1. - alpha) * (parent_value + entry.value);
-            assert!(!value.is_nan(), "`value` should be comparable");
-
+            let value = alpha * entry.value + (1. - alpha) * history.value;
             if value > best_value {
                 best_index = index;
                 best_value = value;
@@ -268,27 +263,17 @@ impl Mcts {
         // See <https://www.chessprogramming.org/Negamax>.
         let value = -value;
 
-        self.tree[node].visits += 1;
-        self.tree[node].value +=
-            (value - self.tree[node].value) / f64::from(self.tree[node].visits);
-
-        self.backward(self.tree[node].parent, value);
-
-        if node == 0 {
-            return;
-        }
-
-        let target = {
-            let parent = self.tree[node].parent;
-            let parent_value = -self.tree[parent].value;
-
-            value - parent_value
-        };
-
-        let entry = self.history.entry(self.tree[node].mov).or_default();
+        let entry = &mut self.tree[node];
+        let history = self.history.entry(entry.mov).or_default();
 
         entry.visits += 1;
-        entry.value += (target - entry.value) / f64::from(entry.visits);
+        entry.value += (value - entry.value) / f64::from(entry.visits);
+
+        history.visits += 1;
+        history.value += (value - history.value) / f64::from(history.visits);
+
+        let parent = entry.parent;
+        self.backward(parent, value);
     }
 
     /// Searches from `node` until one of `max_time`, `max_iters` or `max_nodes`
