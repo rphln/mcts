@@ -25,6 +25,10 @@ body {
   padding: 24px;
 }
 
+details {
+  margin-bottom: 16px;
+}
+
 .node {
   display: flex;
   flex-direction: row;
@@ -58,11 +62,20 @@ body {
 body {
   font-family:
     Inter, Roboto, "Helvetica Neue", "Arial Nova", "Nimbus Sans", Arial, sans-serif;
+  font-weight: normal;
+
   font-size: 12px;
   line-height: 16px;
 
   color: #2e3440;
   background: #fff;
+}
+
+samp {
+  font-family:
+    ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
+    "DejaVu Sans Mono", monospace;
+  font-weight: normal;
 }
 
 .bar {
