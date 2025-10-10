@@ -279,32 +279,20 @@ impl Mcts {
         become self.backward(parent, value);
     }
 
-    /// Searches from `node` until one of `max_time`, `max_iters` or `max_nodes`
-    /// is reached.
+    /// Searches from `node` until `predicate` is false.
     ///
     /// # Panics
     ///
     /// Panics if there are no legal moves available during the search, which
     /// represents a bug in either the MCTS or the game logic.
-    pub fn search(
+    pub fn search_while(
         &mut self,
         node: usize,
         game: &Game,
         rng: &mut impl Rng,
-        max_time: Option<Duration>,
-        max_iters: Option<u32>,
-        max_nodes: Option<usize>,
-    ) -> usize {
-        let mut iters = 0;
-        let mut nodes = 0;
-
-        let start_time = thread_time();
-        let root_depth = game.depth;
-
-        while max_time.is_none_or(|t| thread_time() - start_time < t)
-            && max_iters.is_none_or(|n| iters < n)
-            && max_nodes.is_none_or(|n| nodes < n)
-        {
+        mut predicate: impl FnMut(&Mcts, &Node, &Game) -> bool,
+    ) -> &Node {
+        loop {
             let mut game = game.clone();
             let next = self.expand_and_select_node(node, &mut game, rng);
 
@@ -322,16 +310,44 @@ impl Mcts {
             let reward = game.evaluate();
             self.backward(next, reward);
 
-            iters += 1;
-            nodes += game.depth - root_depth;
+            if !predicate(self, &self.tree[next], &game) {
+                break;
+            }
         }
 
-        let head = self.tree[node].head;
-        let last = self.tree[node].last;
+        self.principal_variation().nth(1).expect("`node` should have children")
+    }
 
-        (head..last)
-            .max_by_key(|&next| self.tree[next].visits)
-            .expect("`head..last` should be non-empty")
+    /// Searches from `node` until one of `max_time`, `max_iters` or `max_nodes`
+    /// is reached.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there are no legal moves available during the search, which
+    /// represents a bug in either the MCTS or the game logic.
+    pub fn search(
+        &mut self,
+        node: usize,
+        game: &Game,
+        rng: &mut impl Rng,
+        max_time: Option<Duration>,
+        max_iters: Option<u32>,
+        max_nodes: Option<usize>,
+    ) -> &Node {
+        let mut iters = 0;
+        let mut nodes = 0;
+
+        let start_time = thread_time();
+        let root_depth = game.depth;
+
+        self.search_while(node, game, rng, |_mcts, _node, game| {
+            iters += 1;
+            nodes += game.depth - root_depth;
+
+            max_time.is_none_or(|t| thread_time() - start_time < t)
+                && max_iters.is_none_or(|n| iters < n)
+                && max_nodes.is_none_or(|n| nodes < n)
+        })
     }
 
     /// Removes parent nodes that satisfy `predicate`.
