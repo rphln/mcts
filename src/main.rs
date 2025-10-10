@@ -11,7 +11,10 @@ use swift_swallow_tree_search::{
 
 fn main() -> anyhow::Result<()> {
     let game_seed = 0;
-    let mut game = Game::new(setup(game_seed).unwrap(), Color::White);
+    let randomize_ready_at = false;
+
+    let world = setup(game_seed, randomize_ready_at).unwrap();
+    let mut game = Game::new(world, Color::White);
 
     let mut tx = BufWriter::new(io::stdout());
 
@@ -29,7 +32,8 @@ fn main() -> anyhow::Result<()> {
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Reset(args) => {
-                game = Game::new(setup(args.seed).unwrap(), Color::White);
+                let world = setup(args.seed, args.randomize_ready_at).unwrap();
+                game = Game::new(world, Color::White);
 
                 let res = ();
                 serde_json::to_writer(&mut tx, &res)?;

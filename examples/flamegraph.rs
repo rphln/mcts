@@ -24,13 +24,17 @@ pub struct Search {
     /// How many nodes to search per move.
     #[clap(long, required_unless_present_any = ["max_time", "max_iters"])]
     pub max_nodes: Option<usize>,
+    /// Whether to randomize the initial `ready_at` of characters.
+    #[clap(long)]
+    pub randomize_ready_at: bool,
 }
 
 pub fn main() -> anyhow::Result<()> {
     let args = Search::parse();
 
     let game_seed = args.seed;
-    let game = Game::new(setup(game_seed).unwrap(), Color::White);
+    let game =
+        Game::new(setup(game_seed, args.randomize_ready_at).unwrap(), Color::White);
 
     let mut rng = DefaultRng::seed_from_u64(args.seed);
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
