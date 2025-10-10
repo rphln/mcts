@@ -5,40 +5,13 @@ html {
 }
 
 *,
-*::before,
-*::after {
+::before,
+::after {
   transition: none 150ms ease-in-out;
   box-sizing: inherit;
 }
 
 /*! Section: Layout */
-
-.node {
-  display: flex;
-  flex-direction: column;
-
-  width: var(--width);
-  visibility: visible;
-
-  will-change: width, visibility;
-  transition-property: visibility, width;
-
-  &.focused {
-    width: 100%;
-  }
-
-  &.collapsed {
-    width: 0;
-    visibility: hidden;
-  }
-}
-
-.children {
-  display: flex;
-  flex-direction: row;
-}
-
-/*! Section: Style */
 
 html,
 body {
@@ -49,6 +22,40 @@ body {
 }
 
 body {
+  padding: 24px;
+}
+
+.node {
+  display: flex;
+  flex-direction: row;
+
+  flex-wrap: wrap;
+  align-items: flex-start;
+
+  .bar {
+    width: 100%;
+  }
+
+  .node {
+    width: var(--width);
+    visibility: visible;
+
+    transition-property: visibility, width;
+
+    &.focused {
+      width: 100%;
+    }
+
+    &.collapsed {
+      width: 0;
+      visibility: hidden;
+    }
+  }
+}
+
+/*! Section: Style */
+
+body {
   font-family:
     Inter, Roboto, "Helvetica Neue", "Arial Nova", "Nimbus Sans", Arial, sans-serif;
   font-size: 12px;
@@ -56,8 +63,6 @@ body {
 
   color: #2e3440;
   background: #fff;
-
-  padding: 24px;
 }
 
 .bar {

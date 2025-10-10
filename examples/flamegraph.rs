@@ -147,13 +147,11 @@ fn node_to_html(
     writeln!(w, r#"  <div class="bar" style="--value: {value:.3}" title="{title}">"#)?;
     writeln!(w, r#"    <span class="label">{label}</span>"#)?;
     writeln!(w, r"  </div>")?;
-    writeln!(w, r#"  <div class="children">"#)?;
 
     for child in children {
         node_to_html(child, mcts, max_depth - 1, min_visits, min, max, w)?;
     }
 
-    writeln!(w, r"  </div>")?;
     writeln!(w, r"</div>")?;
 
     Ok(())
