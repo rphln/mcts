@@ -70,7 +70,7 @@ pub struct Node {
 }
 
 /// Global statistics for a move across the entire tree.
-#[derive(Clone, Default, Debug)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct History {
     /// Number of visits.
     pub visits: u32,
