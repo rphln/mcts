@@ -81,6 +81,7 @@ fn tree_to_html(mcts: &Mcts, w: &mut impl Write) -> anyhow::Result<()> {
 
     writeln!(w, r"<!doctype html>")?;
     writeln!(w, r#"<html lang="en">"#)?;
+
     writeln!(w, r"  <head>")?;
     writeln!(w, r#"    <meta charset="utf-8" />"#)?;
     writeln!(
@@ -88,14 +89,22 @@ fn tree_to_html(mcts: &Mcts, w: &mut impl Write) -> anyhow::Result<()> {
         r#"    <meta name="viewport" content="width=device-width,initial-scale=1" />"#
     )?;
     writeln!(w, r"    <title>Flamegraph</title>")?;
-    writeln!(w, r#"    <link rel="stylesheet" href="/icicle.css"/>"#)?;
-    writeln!(w, r#"    <script type="text/javascript" src="/icicle.js"></script>"#)?;
+    writeln!(
+        w,
+        r#"    <style type="text/css">{css}</style>"#,
+        css = include_str!("flamegraph.css")
+    )?;
+    writeln!(
+        w,
+        r#"    <script type="module">{js}</script>"#,
+        js = include_str!("flamegraph.js")
+    )?;
     writeln!(w, r"  </head>")?;
+
     writeln!(w, r"  <body>")?;
-
     node_to_html(0, mcts, max_depth, min_visits, min, max, w)?;
-
     writeln!(w, r"  </body>")?;
+
     writeln!(w, r"</html>")?;
 
     Ok(())

@@ -1,0 +1,122 @@
+/*! Section: Boxes */
+
+html {
+  box-sizing: border-box;
+}
+
+*,
+*::before,
+*::after {
+  transition: none 150ms ease-in-out;
+  box-sizing: inherit;
+}
+
+/*! Section: Layout */
+
+.node {
+  display: flex;
+  flex-direction: column;
+
+  width: var(--width);
+  visibility: visible;
+
+  will-change: width, visibility;
+  transition-property: visibility, width;
+
+  &.focused {
+    width: 100%;
+  }
+
+  &.collapsed {
+    width: 0;
+    visibility: hidden;
+  }
+}
+
+.children {
+  display: flex;
+  flex-direction: row;
+}
+
+/*! Section: Style */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  font-family:
+    Inter, Roboto, "Helvetica Neue", "Arial Nova", "Nimbus Sans", Arial, sans-serif;
+  font-size: 12px;
+  line-height: 16px;
+
+  color: #2e3440;
+  background: #fff;
+
+  padding: 24px;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+
+  cursor: pointer;
+  background-color: var(--m0);
+
+  margin: 1px;
+  overflow: hidden;
+
+  transition-property: opacity;
+
+  .focused:has(.focused) > & {
+    opacity: 60%;
+  }
+
+  .label {
+    padding: 4px;
+
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  /*! From <https://colorbrewer2.org/#type=diverging&scheme=Spectral&n=11>. */
+  --c10: #9e0142;
+  --c9: #d53e4f;
+  --c8: #f46d43;
+  --c7: #fdae61;
+  --c6: #fee08b;
+  --c5: #ffffbf;
+  --c4: #e6f598;
+  --c3: #abdda4;
+  --c2: #66c2a5;
+  --c1: #3288bd;
+  --c0: #5e4fa2;
+
+  /* For `0 <= value <= 1`. */
+  --t9: clamp(0%, 100% * (10 * var(--value) - 9), 100%);
+  --t8: clamp(0%, 100% * (10 * var(--value) - 8), 100%);
+  --t7: clamp(0%, 100% * (10 * var(--value) - 7), 100%);
+  --t6: clamp(0%, 100% * (10 * var(--value) - 6), 100%);
+  --t5: clamp(0%, 100% * (10 * var(--value) - 5), 100%);
+  --t4: clamp(0%, 100% * (10 * var(--value) - 4), 100%);
+  --t3: clamp(0%, 100% * (10 * var(--value) - 3), 100%);
+  --t2: clamp(0%, 100% * (10 * var(--value) - 2), 100%);
+  --t1: clamp(0%, 100% * (10 * var(--value) - 1), 100%);
+  --t0: clamp(0%, 100% * (10 * var(--value) - 0), 100%);
+
+  --m9: color-mix(in oklab, var(--c9), var(--c10) var(--t9));
+  --m8: color-mix(in oklab, var(--c8), var(--m9) var(--t8));
+  --m7: color-mix(in oklab, var(--c7), var(--m8) var(--t7));
+  --m6: color-mix(in oklab, var(--c6), var(--m7) var(--t6));
+  --m5: color-mix(in oklab, var(--c5), var(--m6) var(--t5));
+  --m4: color-mix(in oklab, var(--c4), var(--m5) var(--t4));
+  --m3: color-mix(in oklab, var(--c3), var(--m4) var(--t3));
+  --m2: color-mix(in oklab, var(--c2), var(--m3) var(--t2));
+  --m1: color-mix(in oklab, var(--c1), var(--m2) var(--t1));
+  --m0: color-mix(in oklab, var(--c0), var(--m1) var(--t0));
+}
