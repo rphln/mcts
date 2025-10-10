@@ -9,15 +9,19 @@ use swift_swallow_tree_search::{
     mcts::Mcts,
 };
 
-/// Ask the engine to search for the next move from the current position.
+/// Plots a flamegraph of the MCTS search tree after searching from the root.
 #[derive(Parser)]
 pub struct Search {
+    /// Seed for the game and search.
     #[clap(long, default_value_t = 0)]
     pub seed: u64,
+    /// How much time to spend per move, in milliseconds.
     #[clap(long, value_parser = parse_millis, required_unless_present_any = ["max_iters", "max_nodes"])]
     pub max_time: Option<Duration>,
+    /// How many iterations to search per move.
     #[clap(long, required_unless_present_any = ["max_time", "max_nodes"])]
     pub max_iters: Option<u32>,
+    /// How many nodes to search per move.
     #[clap(long, required_unless_present_any = ["max_time", "max_iters"])]
     pub max_nodes: Option<usize>,
 }
