@@ -1,4 +1,4 @@
-use std::{assert_matches::assert_matches, iter::successors};
+use std::{assert_matches::assert_matches, iter::successors, time::Duration};
 
 use rand::prelude::*;
 use rustc_hash::FxHashMap;
@@ -288,17 +288,17 @@ impl Mcts {
         node: usize,
         game: &Game,
         rng: &mut impl Rng,
-        max_time: Option<u64>,
+        max_time: Option<Duration>,
         max_iters: Option<u32>,
         max_nodes: Option<usize>,
     ) -> usize {
         let mut iters = 0;
         let mut nodes = 0;
 
-        let now = thread_time_ms();
+        let start_time = thread_time();
         let root_depth = game.depth;
 
-        while max_time.is_none_or(|t| thread_time_ms() - now < t)
+        while max_time.is_none_or(|t| thread_time() - start_time < t)
             && max_iters.is_none_or(|n| iters < n)
             && max_nodes.is_none_or(|n| nodes < n)
         {
@@ -379,12 +379,14 @@ impl Mcts {
     }
 }
 
-/// Returns the current CPU time in nanoseconds.
+/// Returns the CPU time used by the current thread.
 ///
 /// # Panics
 ///
-/// Panics if the system call to get the CPU time fails.
-fn thread_time_ms() -> u64 {
+/// This uses the `clock_gettime` system call with the `CLOCK_THREAD_CPUTIME_ID`
+/// clock. Panics if the system call to get the CPU time fails.
+#[must_use]
+fn thread_time() -> Duration {
     let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
 
     unsafe {
@@ -395,8 +397,8 @@ fn thread_time_ms() -> u64 {
         );
     };
 
-    let tv_sec = u64::try_from(time.tv_sec).unwrap();
-    let tv_nsec = u64::try_from(time.tv_nsec).unwrap();
+    let secs = u64::try_from(time.tv_sec).unwrap();
+    let nanos = u32::try_from(time.tv_nsec).unwrap();
 
-    tv_sec * 1_000 + tv_nsec / 1_000_000
+    Duration::new(secs, nanos)
 }

@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, fs::File, io::Write};
+use std::{cmp::Reverse, fs::File, io::Write, num::ParseIntError, time::Duration};
 
 use clap::Parser;
 use rand::prelude::*;
@@ -14,8 +14,8 @@ use swift_swallow_tree_search::{
 pub struct Search {
     #[clap(long, default_value_t = 0)]
     pub seed: u64,
-    #[clap(long, required_unless_present_any = ["max_iters", "max_nodes"])]
-    pub max_time: Option<u64>,
+    #[clap(long, value_parser = parse_millis, required_unless_present_any = ["max_iters", "max_nodes"])]
+    pub max_time: Option<Duration>,
     #[clap(long, required_unless_present_any = ["max_time", "max_nodes"])]
     pub max_iters: Option<u32>,
     #[clap(long, required_unless_present_any = ["max_time", "max_iters"])]
@@ -45,6 +45,11 @@ pub fn main() -> anyhow::Result<()> {
     tree_to_html(&mcts, &mut file)?;
 
     Ok(())
+}
+
+fn parse_millis(arg: &str) -> Result<Duration, ParseIntError> {
+    let millis = arg.parse()?;
+    Ok(Duration::from_millis(millis))
 }
 
 // region: Plotting.
