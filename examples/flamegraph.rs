@@ -1,4 +1,7 @@
-use std::{cmp::Reverse, fs::File, io::Write, num::ParseIntError, time::Duration};
+use std::{
+    cmp::Reverse, fs::File, io::Write, num::ParseIntError, path::PathBuf,
+    process::Command, time::Duration,
+};
 
 use clap::Parser;
 use rand::prelude::*;
@@ -10,47 +13,40 @@ use swift_swallow_tree_search::{
 };
 
 /// Plots a flamegraph of the MCTS search tree after searching from the root.
-#[derive(Parser)]
-pub struct Search {
+#[derive(Parser, Debug)]
+pub struct Args {
+    /// Path to the output HTML file.
+    #[clap(default_value = "/tmp/flamegraph.html")]
+    pub destination: PathBuf,
     /// Seed for the game and search.
     #[clap(long, default_value_t = 0)]
     pub seed: u64,
     /// How much time to spend per move, in milliseconds.
-    #[clap(long, value_parser = parse_millis, required_unless_present_any = ["max_iters", "max_nodes"])]
-    pub max_time: Option<Duration>,
+    #[clap(long, value_parser = parse_millis, required_unless_present_any = ["iters", "nodes"])]
+    pub time: Option<Duration>,
     /// How many iterations to search per move.
-    #[clap(long, required_unless_present_any = ["max_time", "max_nodes"])]
-    pub max_iters: Option<u32>,
+    #[clap(long, required_unless_present_any = ["time", "nodes"])]
+    pub iters: Option<u32>,
     /// How many nodes to search per move.
-    #[clap(long, required_unless_present_any = ["max_time", "max_iters"])]
-    pub max_nodes: Option<usize>,
-    /// Whether to randomize the initial `ready_at` of characters.
-    #[clap(long)]
-    pub randomize_ready_at: bool,
+    #[clap(long, required_unless_present_any = ["time", "iters"])]
+    pub nodes: Option<usize>,
 }
 
 pub fn main() -> anyhow::Result<()> {
-    let args = Search::parse();
+    let args = Args::parse();
 
-    let game_seed = args.seed;
-    let game =
-        Game::new(setup(game_seed, args.randomize_ready_at).unwrap(), Color::White);
+    let world = setup(args.seed, false).unwrap();
+    let game = Game::new(world, Color::White);
 
     let mut rng = DefaultRng::seed_from_u64(args.seed);
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
 
-    let root = 0;
-    let _next = mcts.search(
-        root,
-        &game,
-        &mut rng,
-        args.max_time,
-        args.max_iters,
-        args.max_nodes,
-    );
+    let _next = mcts.search(0, &game, &mut rng, args.time, args.iters, args.nodes);
 
-    let mut file = File::create("public_html/index.html")?;
-    tree_to_html(&mcts, &mut file)?;
+    let mut file = File::create(&args.destination)?;
+    tree_to_html(&mcts, &args, &mut file)?;
+
+    let _ = Command::new("open").arg(&args.destination).spawn()?;
 
     Ok(())
 }
@@ -62,7 +58,7 @@ fn parse_millis(arg: &str) -> Result<Duration, ParseIntError> {
 
 // region: Plotting.
 
-fn tree_to_html(mcts: &Mcts, w: &mut impl Write) -> anyhow::Result<()> {
+fn tree_to_html(mcts: &Mcts, args: &Args, w: &mut impl Write) -> anyhow::Result<()> {
     let pruning_threshold = {
         let mut visits: Vec<u32> = mcts.tree.iter().map(|node| node.visits).collect();
         visits.sort_unstable();
@@ -101,7 +97,14 @@ fn tree_to_html(mcts: &Mcts, w: &mut impl Write) -> anyhow::Result<()> {
     writeln!(w, r"  </head>")?;
 
     writeln!(w, r"  <body>")?;
+
+    writeln!(w, r"  <details closed>")?;
+    writeln!(w, r"    <summary>Arguments</summary>")?;
+    writeln!(w, r"    <pre><samp>{args:#?}</samp></pre>")?;
+    writeln!(w, r"  </details>")?;
+
     node_to_html(0, mcts, pruning_threshold, min, max, w)?;
+
     writeln!(w, r"  </body>")?;
 
     writeln!(w, r"</html>")?;
