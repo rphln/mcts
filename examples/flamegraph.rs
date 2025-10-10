@@ -63,19 +63,18 @@ fn parse_millis(arg: &str) -> Result<Duration, ParseIntError> {
 // region: Plotting.
 
 fn tree_to_html(mcts: &Mcts, w: &mut impl Write) -> anyhow::Result<()> {
-    let max_depth = 48;
-    let min_visits = {
+    let pruning_threshold = {
         let mut visits: Vec<u32> = mcts.tree.iter().map(|node| node.visits).collect();
         visits.sort_unstable();
 
-        let top_n = visits.len().saturating_sub(30_000);
+        let top_n = visits.len().saturating_sub(100_000);
         visits[top_n]
     };
 
     let max = mcts
         .tree
         .iter()
-        .filter(|node| node.visits >= min_visits)
+        .filter(|node| node.visits > pruning_threshold)
         .fold(0., |max, node| f64::max(max, f64::abs(node.value)));
     let min = -max;
 
@@ -102,7 +101,7 @@ fn tree_to_html(mcts: &Mcts, w: &mut impl Write) -> anyhow::Result<()> {
     writeln!(w, r"  </head>")?;
 
     writeln!(w, r"  <body>")?;
-    node_to_html(0, mcts, max_depth, min_visits, min, max, w)?;
+    node_to_html(0, mcts, pruning_threshold, min, max, w)?;
     writeln!(w, r"  </body>")?;
 
     writeln!(w, r"</html>")?;
@@ -113,14 +112,13 @@ fn tree_to_html(mcts: &Mcts, w: &mut impl Write) -> anyhow::Result<()> {
 fn node_to_html(
     node: usize,
     mcts: &Mcts,
-    max_depth: usize,
-    min_visits: u32,
+    pruning_threshold: u32,
     min: f64,
     max: f64,
     w: &mut impl Write,
 ) -> anyhow::Result<()> {
     let node = &mcts.tree[node];
-    if max_depth == 0 || node.visits < min_visits {
+    if node.visits <= pruning_threshold {
         return Ok(());
     }
 
@@ -149,7 +147,7 @@ fn node_to_html(
     writeln!(w, r"  </div>")?;
 
     for child in children {
-        node_to_html(child, mcts, max_depth - 1, min_visits, min, max, w)?;
+        node_to_html(child, mcts, pruning_threshold, min, max, w)?;
     }
 
     writeln!(w, r"</div>")?;
