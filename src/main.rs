@@ -74,7 +74,8 @@ pub fn search(game: &Game, args: &Search) -> Move {
     let mut rng = DefaultRng::seed_from_u64(args.seed);
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
 
-    let &Node { mov, .. } =
-        mcts.search(0, game, &mut rng, args.time, args.iters, args.nodes);
+    let &Node { mov, .. } = mcts
+        .search(0, game, &mut rng, args.time, args.iters, args.nodes)
+        .expect("`node` should have children");
     mov
 }

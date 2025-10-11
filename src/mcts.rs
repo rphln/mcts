@@ -291,7 +291,7 @@ impl Mcts {
         game: &Game,
         rng: &mut impl Rng,
         mut predicate: impl FnMut(&Mcts, &Node, &Game) -> bool,
-    ) -> &Node {
+    ) -> Option<&Node> {
         loop {
             let mut game = game.clone();
             let next = self.expand_and_select_node(node, &mut game, rng);
@@ -315,7 +315,7 @@ impl Mcts {
             }
         }
 
-        self.principal_variation().nth(1).expect("`node` should have children")
+        self.principal_variation().nth(1)
     }
 
     /// Searches from `node` until one of `max_time`, `max_iters` or `max_nodes`
@@ -333,7 +333,7 @@ impl Mcts {
         max_time: Option<Duration>,
         max_iters: Option<u32>,
         max_nodes: Option<usize>,
-    ) -> &Node {
+    ) -> Option<&Node> {
         let mut iters = 0;
         let mut nodes = 0;
 
