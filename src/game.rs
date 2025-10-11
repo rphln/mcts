@@ -65,7 +65,7 @@ impl Game {
     }
 
     /// Applies a move to the world, alternates `color` and increments `depth`.
-    pub fn play(&mut self, mov: Move) {
+    pub fn play(&mut self, &mov: &Move) {
         let rules = self.rules.as_ref();
         let _decide = decide(mov, rules, &mut self.world).unwrap();
 

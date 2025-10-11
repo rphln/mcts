@@ -36,7 +36,7 @@ fn main() -> anyhow::Result<()> {
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Play(args) => {
-                game.play(args.mov);
+                game.play(&args.mov);
 
                 // TODO: Handle draws.
                 let res = match game.world.active_team() {
@@ -77,5 +77,7 @@ pub fn search(game: &Game, args: &Search) -> Move {
     let &Node { mov, .. } = mcts
         .search(0, game, &mut rng, args.time, args.iters, args.nodes)
         .expect("`node` should have children");
+    let (&mov, _) = mcts.history.get_index(mov).unwrap();
+
     mov
 }
