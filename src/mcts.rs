@@ -302,7 +302,7 @@ impl Mcts {
                     break;
                 }
 
-                let &mov =
+                let mov =
                     game.moves().choose(rng).expect("`moves` should be non-empty");
                 game.play(mov);
             }

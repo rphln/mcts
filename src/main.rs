@@ -1,7 +1,6 @@
 use std::io::{self, BufWriter, Write};
 
 use rand::prelude::*;
-use swift_swallow::examples::setup;
 use swift_swallow_rpc::{Handshake, Outcome, Request, Search};
 use swift_swallow_tree_search::{
     DefaultRng,
@@ -13,8 +12,7 @@ fn main() -> anyhow::Result<()> {
     let game_seed = 0;
     let randomize_ready_at = false;
 
-    let world = setup(game_seed, randomize_ready_at).unwrap();
-    let mut game = Game::new(world, Color::White);
+    let mut game = Game::new(game_seed, randomize_ready_at)?;
 
     let mut tx = BufWriter::new(io::stdout());
 
@@ -32,8 +30,7 @@ fn main() -> anyhow::Result<()> {
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Reset(args) => {
-                let world = setup(args.seed, args.randomize_ready_at).unwrap();
-                game = Game::new(world, Color::White);
+                game = Game::new(args.seed, args.randomize_ready_at)?;
 
                 let res = ();
                 serde_json::to_writer(&mut tx, &res)?;
@@ -65,11 +62,13 @@ fn main() -> anyhow::Result<()> {
 
 #[must_use]
 pub fn search(game: &Game, args: &Search) -> Move {
-    let legal_moves = game.moves();
-    assert!(!legal_moves.is_empty(), "No legal moves.");
+    let mut moves = game.moves();
+    let first = moves.next().expect("`moves` should be non-empty");
 
-    if legal_moves.len() == 1 {
-        return legal_moves[0];
+    // For now, just skip the search for singular moves. Later on, we could ponder
+    // here.
+    if moves.next().is_none() {
+        return first;
     }
 
     let mut rng = DefaultRng::seed_from_u64(args.seed);

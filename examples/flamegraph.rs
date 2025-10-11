@@ -5,7 +5,6 @@ use std::{
 
 use clap::Parser;
 use rand::prelude::*;
-use swift_swallow::examples::setup;
 use swift_swallow_tree_search::{
     DefaultRng,
     game::{Color, Game, Move},
@@ -35,8 +34,7 @@ pub struct Args {
 pub fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let world = setup(args.seed, false).unwrap();
-    let game = Game::new(world, Color::White);
+    let game = Game::new(args.seed, false)?;
 
     let mut rng = DefaultRng::seed_from_u64(args.seed);
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
