@@ -2,8 +2,8 @@ use std::iter::once;
 
 use either::Either;
 use swift_swallow::{
-    content::{Rules, setup},
-    event::{Command, decide, query_actions},
+    content::{Rules, decide, query_actions, setup},
+    event::Command,
     subscribe::Sender,
     team::TeamKey,
     world::World,
@@ -54,9 +54,15 @@ impl Game {
     #[must_use]
     pub fn moves(&mut self) -> impl ExactSizeIterator<Item = Move> {
         if self.world.active_team() == self.color {
+            // This is a nasty situation: we need to mutably borrow `self` to send the
+            // `Query` event, but this is supposed to be an idempotent method.
+            //
+            // This is a compromise to avoid duplicating the whole event infrastructure
+            // (which assumes mutable access to the world) for the sake of a single
+            // read-only event.
             let query = query_actions(self.rules, &mut self.world);
 
-            let iter = query.0.into_iter();
+            let iter = query.includes.into_iter();
             Either::Left(iter)
         } else {
             let iter = once(Command::None { team: self.color });
