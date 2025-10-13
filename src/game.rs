@@ -1,9 +1,10 @@
-use std::{iter::once, rc::Rc};
+use std::iter::once;
 
 use either::Either;
 use swift_swallow::{
-    content::{Rules, rules, setup},
+    content::{Rules, setup},
     event::{Command, decide, query_actions},
+    subscribe::Sender,
     team::TeamKey,
     world::World,
 };
@@ -22,7 +23,7 @@ pub struct Game {
     /// Underlying world state.
     pub world: World,
     /// Rules for action generation and execution.
-    pub rules: Rc<Rules>,
+    pub rules: Sender<Rules>,
     /// Local turn indicator used to alternate sides every move, regardless of
     /// what `world.active_team()` reports.
     pub color: TeamKey,
@@ -37,10 +38,10 @@ impl Game {
     /// Constructs a new game using the default rules and content setup.
     #[must_use]
     pub fn new(game_seed: u64, randomize_ready_at: bool) -> anyhow::Result<Self> {
-        let rules = rules();
-        let world = setup(game_seed, randomize_ready_at, &rules)?;
+        let rules = Sender::<Rules>::default();
+        let world = setup(game_seed, randomize_ready_at, rules)?;
 
-        Ok(Self { world, rules: Rc::new(rules), color: TeamKey::White, depth: 0 })
+        Ok(Self { world, rules, color: TeamKey::White, depth: 0 })
     }
 
     /// Whether the underlying world considers the game finished.
@@ -51,12 +52,11 @@ impl Game {
 
     /// Iterator over legal moves for the current `color`.
     #[must_use]
-    pub fn moves(&self) -> impl ExactSizeIterator<Item = Move> {
+    pub fn moves(&mut self) -> impl ExactSizeIterator<Item = Move> {
         if self.world.active_team() == self.color {
-            let rules = self.rules.as_ref();
-            let query = query_actions(rules, &self.world).unwrap();
+            let query = query_actions(self.rules, &mut self.world);
 
-            let iter = query.into_iter();
+            let iter = query.0.into_iter();
             Either::Left(iter)
         } else {
             let iter = once(Command::None { team: self.color });
@@ -66,8 +66,7 @@ impl Game {
 
     /// Applies a move to the world, alternates `color` and increments `depth`.
     pub fn play(&mut self, &mov: &Move) {
-        let rules = self.rules.as_ref();
-        let _decide = decide(mov, rules, &mut self.world).unwrap();
+        let _decide = decide(mov, self.rules, &mut self.world);
 
         self.color = !self.color;
         self.depth += 1;

@@ -194,7 +194,7 @@ impl Mcts {
     /// # References
     ///
     /// [1]: https://www.chessprogramming.org/One_Reply_Extensions
-    fn expand_node(&mut self, node: usize, game: &Game, rng: &mut impl Rng) {
+    fn expand_node(&mut self, node: usize, game: &mut Game, rng: &mut impl Rng) {
         assert!(self.tree[node].is_leaf(), "`node` should be a leaf");
 
         let head = self.tree.len();

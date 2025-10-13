@@ -48,7 +48,7 @@ fn main() -> anyhow::Result<()> {
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Search(args) => {
-                let res = search(&game, &args);
+                let res = search(&mut game, &args);
                 serde_json::to_writer(&mut tx, &res)?;
             }
         }
@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[must_use]
-pub fn search(game: &Game, args: &Search) -> Move {
+pub fn search(game: &mut Game, args: &Search) -> Move {
     let mut moves = game.moves();
     let first = moves.next().expect("`moves` should be non-empty");
 
@@ -70,6 +70,8 @@ pub fn search(game: &Game, args: &Search) -> Move {
     if moves.next().is_none() {
         return first;
     }
+
+    drop(moves);
 
     let mut rng = DefaultRng::seed_from_u64(args.seed);
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
