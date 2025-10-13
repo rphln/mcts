@@ -2,7 +2,7 @@ use std::iter::once;
 
 use either::Either;
 use swift_swallow::{
-    content::{Rules, decide, query_actions, setup},
+    content::{Rules, decide, query_commands, setup},
     event::Command,
     subscribe::Sender,
     team::TeamKey,
@@ -54,7 +54,7 @@ impl Game {
     #[must_use]
     pub fn moves(&self) -> impl ExactSizeIterator<Item = Move> {
         if self.world.active_team() == self.color {
-            let query = query_actions(self.rules, &self.world);
+            let query = query_commands(self.rules, &self.world);
 
             let iter = query.includes.into_iter();
             Either::Left(iter)
