@@ -194,7 +194,7 @@ impl Mcts {
     /// # References
     ///
     /// [1]: https://www.chessprogramming.org/One_Reply_Extensions
-    fn expand_node(&mut self, node: usize, game: &mut Game, rng: &mut impl Rng) {
+    fn expand_node(&mut self, node: usize, game: &Game, rng: &mut impl Rng) {
         assert!(self.tree[node].is_leaf(), "`node` should be a leaf");
 
         let head = self.tree.len();
@@ -364,7 +364,7 @@ impl Mcts {
             iters += 1;
             nodes += game.depth - root_depth;
 
-            max_time.is_none_or(|t| thread_time() - start_time < t)
+            max_time.is_none_or(|t| thread_time() < start_time + t)
                 && max_iters.is_none_or(|n| iters < n)
                 && max_nodes.is_none_or(|n| nodes < n)
         })

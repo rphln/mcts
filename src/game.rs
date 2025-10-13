@@ -52,15 +52,9 @@ impl Game {
 
     /// Iterator over legal moves for the current `color`.
     #[must_use]
-    pub fn moves(&mut self) -> impl ExactSizeIterator<Item = Move> {
+    pub fn moves(&self) -> impl ExactSizeIterator<Item = Move> {
         if self.world.active_team() == self.color {
-            // This is a nasty situation: we need to mutably borrow `self` to send the
-            // `Query` event, but this is supposed to be an idempotent method.
-            //
-            // This is a compromise to avoid duplicating the whole event infrastructure
-            // (which assumes mutable access to the world) for the sake of a single
-            // read-only event.
-            let query = query_actions(self.rules, &mut self.world);
+            let query = query_actions(self.rules, &self.world);
 
             let iter = query.includes.into_iter();
             Either::Left(iter)
