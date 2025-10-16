@@ -46,6 +46,8 @@ pub struct Mcts {
     /// See <https://www.cs.cornell.edu/~asampson/blog/flattening.html>.
     pub tree: Vec<Node>,
     /// Global history statistics for moves.
+    ///
+    /// Also serves as an interner for moves used in nodes.
     pub history: IndexMap<Move, History, FxBuildHasher>,
     /// See <https://stackoverflow.com/a/35666246>.
     pub visits_to_expand: u32,
@@ -54,9 +56,9 @@ pub struct Mcts {
 }
 
 /// Statistics for a single ply in the game tree.
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Node {
-    /// Move used to reach this node.
+    /// Move used to reach this node. Interned through `history`.
     pub mov: usize,
     /// Number of visits.
     pub visits: u32,
@@ -139,9 +141,9 @@ impl Mcts {
         successors(self.tree.get(node), |node| self.tree.get(node.parent))
     }
 
-    /// Recursively traverses the tree from the root and selects the next leaf
-    /// node to explore. Expands nodes as needed and updates the game state
-    /// along the selected path.
+    /// Recursively traverses the tree from a given `node` and selects the next
+    /// leaf node to explore. Expands nodes as needed and updates the game
+    /// state along the selected path.
     ///
     /// This method allows for batched evaluation and back-propagation of the
     /// batched evaluations.
@@ -149,15 +151,7 @@ impl Mcts {
     /// # Panics
     ///
     /// Panics if there are no legal moves available during the search.
-    pub fn expand_and_select(&mut self, game: &mut Game, rng: &mut impl Rng) -> usize {
-        self.expand_and_select_node(0, game, rng)
-    }
-
-    /// Traverses the tree from a given node and selects the next leaf node to
-    /// explore.
-    ///
-    /// Internal implementation of [`Mcts::select_and_expand`].
-    pub fn expand_and_select_node(
+    pub fn expand_and_select(
         &mut self,
         node: usize,
         game: &mut Game,
@@ -180,7 +174,7 @@ impl Mcts {
 
         game.play(mov);
 
-        become self.expand_and_select_node(next, game, rng);
+        become self.expand_and_select(next, game, rng);
     }
 
     /// Expands a leaf node by generating all legal moves.
@@ -274,6 +268,20 @@ impl Mcts {
         best_index
     }
 
+    /// See <https://www.sciencedirect.com/science/article/pii/S0304397516302717>.
+    pub fn default_policy(&self, game: &mut Game, rng: &mut impl Rng) -> f64 {
+        for _ in 0..2 {
+            if game.is_over() {
+                break;
+            }
+
+            let mov = game.moves().choose(rng).expect("`moves` should be non-empty");
+            game.play(&mov);
+        }
+
+        game.evaluate()
+    }
+
     /// Back-propagates the reward from a leaf node up to the root.
     ///
     /// Rewards must be provided from the perspective of the side moving at the
@@ -314,20 +322,9 @@ impl Mcts {
     ) -> Option<&Node> {
         loop {
             let mut game = game.clone();
-            let next = self.expand_and_select_node(node, &mut game, rng);
+            let next = self.expand_and_select(node, &mut game, rng);
 
-            // See <https://www.sciencedirect.com/science/article/pii/S0304397516302717>.
-            for _ in 0..2 {
-                if game.is_over() {
-                    break;
-                }
-
-                let mov =
-                    game.moves().choose(rng).expect("`moves` should be non-empty");
-                game.play(&mov);
-            }
-
-            let reward = game.evaluate();
+            let reward = self.default_policy(&mut game, rng);
             self.backward(next, reward);
 
             if !predicate(self, &self.tree[next], &game) {
@@ -409,8 +406,13 @@ impl Mcts {
             }
 
             if !node.is_leaf() {
-                node.last = map[node.head].saturating_add(node.last - node.head);
-                node.head = map[node.head];
+                if map[node.head] == SENTINEL {
+                    node.last = SENTINEL;
+                    node.head = SENTINEL;
+                } else {
+                    node.last = map[node.head] + (node.last - node.head);
+                    node.head = map[node.head];
+                }
             }
         }
 
