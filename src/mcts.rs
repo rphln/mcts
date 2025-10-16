@@ -270,6 +270,8 @@ impl Mcts {
 
     /// See <https://www.sciencedirect.com/science/article/pii/S0304397516302717>.
     pub fn default_policy(&self, game: &mut Game, rng: &mut impl Rng) -> f64 {
+        let color = game.color;
+
         for _ in 0..2 {
             if game.is_over() {
                 break;
@@ -279,7 +281,7 @@ impl Mcts {
             game.play(&mov);
         }
 
-        game.evaluate()
+        game.evaluate(color)
     }
 
     /// Back-propagates the reward from a leaf node up to the root.

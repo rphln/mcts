@@ -70,7 +70,7 @@ impl Game {
 
     /// Heuristic evaluation from the perspective of `color`.
     #[must_use]
-    pub fn evaluate(&self) -> f64 {
+    pub fn evaluate(&self, color: Color) -> f64 {
         let mut max = 0.;
         let mut min = 0.;
 
@@ -82,7 +82,7 @@ impl Game {
             let health = f64::from(character.current_health());
             let score = f64::sqrt(64. * health);
 
-            if character.team == self.color {
+            if character.team == color {
                 max += score;
             } else {
                 min += score;
