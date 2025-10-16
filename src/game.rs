@@ -2,11 +2,7 @@ use std::iter::once;
 
 use either::Either;
 use swift_swallow::{
-    content::{Rules, decide, query_commands, setup},
-    event::Command,
-    subscribe::Sender,
-    team::TeamKey,
-    world::World,
+    Command, Rules, Sender, TeamKey, World, decide, query_commands, setup,
 };
 
 /// Alias for a game move (re-export of [`Command`]).
