@@ -174,7 +174,7 @@ impl Mcts {
 
         game.play(mov);
 
-        become self.expand_and_select(next, game, rng);
+        self.expand_and_select(next, game, rng)
     }
 
     /// Expands a leaf node by generating all legal moves.
@@ -306,7 +306,7 @@ impl Mcts {
         history.value += (value - history.value) / f64::from(history.visits);
 
         let parent = entry.parent;
-        become self.backward(parent, value);
+        self.backward(parent, value);
     }
 
     /// Searches from `node` until `predicate` is false.
