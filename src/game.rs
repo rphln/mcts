@@ -2,7 +2,7 @@ use std::iter::once;
 
 use either::Either;
 use swift_swallow::{
-    Command, Rules, Sender, TeamKey, World, decide, query_commands, setup,
+    Command, Rules, TeamKey, World, decide, query_commands, rules, setup,
 };
 
 /// Alias for a game move (re-export of [`Command`]).
@@ -19,7 +19,7 @@ pub struct Game {
     /// Underlying world state.
     pub world: World,
     /// Rules for action generation and execution.
-    pub rules: Sender<Rules>,
+    pub rules: Rules,
     /// Local turn indicator used to alternate sides every move, regardless of
     /// what `world.active_team()` reports.
     pub color: TeamKey,
@@ -34,8 +34,8 @@ impl Game {
     /// Constructs a new game using the default rules and content setup.
     #[must_use]
     pub fn new(game_seed: u64, randomize_ready_at: bool) -> anyhow::Result<Self> {
-        let rules = Sender::<Rules>::default();
-        let world = setup(game_seed, randomize_ready_at, rules)?;
+        let rules = rules();
+        let world = setup(game_seed, randomize_ready_at, &rules)?;
 
         Ok(Self { world, rules, color: TeamKey::White, depth: 0 })
     }
@@ -50,7 +50,7 @@ impl Game {
     #[must_use]
     pub fn moves(&self) -> impl ExactSizeIterator<Item = Move> {
         if self.world.active_team() == self.color {
-            let query = query_commands(self.rules, &self.world);
+            let query = query_commands(&self.rules, &self.world);
 
             let iter = query.includes.into_iter();
             Either::Left(iter)
@@ -62,7 +62,7 @@ impl Game {
 
     /// Applies a move to the world, alternates `color` and increments `depth`.
     pub fn play(&mut self, &mov: &Move) {
-        let _decide = decide(mov, self.rules, &mut self.world);
+        let _decide = decide(mov, &self.rules, &mut self.world);
 
         self.color = !self.color;
         self.depth += 1;
