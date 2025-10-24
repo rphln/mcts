@@ -228,10 +228,10 @@ fn label(mov: &Move) -> String {
             Color::White => "⚪".to_owned(),
             Color::Black => "⚫".to_owned(),
         },
-        Move::Pass { character } => {
+        Move::Wait { character } => {
             format!("⌛ {label} → Pass", label = CHARACTER[character.0])
         }
-        Move::Movement { character, destination } => {
+        Move::Move { character, destination } => {
             format!(
                 "🧭 {label} → ⟨{x}, {y}⟩",
                 label = CHARACTER[character.0],
@@ -239,14 +239,14 @@ fn label(mov: &Move) -> String {
                 y = destination.r,
             )
         }
-        Move::Action { action, target_hint: Some(target), .. } => {
+        Move::Act { action, target_hint: Some(target), .. } => {
             format!(
                 "🎯 {label} → {target}",
                 label = ACTION[action.0],
                 target = CHARACTER[target.0],
             )
         }
-        Move::Action { action, destination, .. } => {
+        Move::Act { action, destination, .. } => {
             format!(
                 "🎯 {label} → ⟨{x}, {y}⟩",
                 label = ACTION[action.0],
