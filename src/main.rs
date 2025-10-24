@@ -60,6 +60,11 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Performs a search from the current game state and returns the selected move.
+///
+/// # Panics
+///
+/// Panics if no legal moves are available in the current game state.
 #[must_use]
 pub fn search(game: &mut Game, args: &Search) -> Move {
     let mut moves = game.moves();

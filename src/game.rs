@@ -32,7 +32,10 @@ pub struct Game {
 
 impl Game {
     /// Constructs a new game using the default rules and content setup.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Propagates any errors encountered during world setup. See [`setup`].
     pub fn new(game_seed: u64, randomize_ready_at: bool) -> anyhow::Result<Self> {
         let rules = rules();
         let world = setup(game_seed, randomize_ready_at, &rules)?;

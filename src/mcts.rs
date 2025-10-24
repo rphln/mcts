@@ -185,9 +185,11 @@ impl Mcts {
     ///
     /// Children are shuffled to reduce selection bias.
     ///
-    /// # References
+    /// [1]: <https://www.chessprogramming.org/One_Reply_Extensions>
     ///
-    /// [1]: https://www.chessprogramming.org/One_Reply_Extensions
+    /// # Panics
+    ///
+    /// Panics if `node` is not a leaf or if there are no legal moves available.
     fn expand_node(&mut self, node: usize, game: &Game, rng: &mut impl Rng) {
         assert!(self.tree[node].is_leaf(), "`node` should be a leaf");
 
@@ -269,6 +271,10 @@ impl Mcts {
     }
 
     /// See <https://www.sciencedirect.com/science/article/pii/S0304397516302717>.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no legal moves are available during the roll-out.
     pub fn default_policy(&self, game: &mut Game, rng: &mut impl Rng) -> f64 {
         let color = game.color;
 
