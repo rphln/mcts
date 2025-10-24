@@ -87,19 +87,19 @@ const SENTINEL: usize = !0;
 impl Node {
     /// Creates a new node with default statistics.
     #[must_use]
-    fn new(parent: usize, mov: usize) -> Self {
+    const fn new(parent: usize, mov: usize) -> Self {
         Self { mov, visits: 0, value: 0., parent, head: SENTINEL, last: SENTINEL }
     }
 
     /// Returns whether this node is the root node.
     #[must_use]
-    pub fn is_root(&self) -> bool {
+    pub const fn is_root(&self) -> bool {
         self.parent == SENTINEL
     }
 
     /// Returns whether this node is a leaf.
     #[must_use]
-    pub fn is_leaf(&self) -> bool {
+    pub const fn is_leaf(&self) -> bool {
         self.head == SENTINEL
     }
 }
@@ -265,8 +265,6 @@ impl Mcts {
             }
         }
 
-        assert_ne!(best_index, SENTINEL, "`best_index` should be set");
-
         best_index
     }
 
@@ -326,7 +324,7 @@ impl Mcts {
         node: usize,
         game: &Game,
         rng: &mut impl Rng,
-        mut predicate: impl FnMut(&Mcts, &Node, &Game) -> bool,
+        mut predicate: impl FnMut(&Self, &Node, &Game) -> bool,
     ) -> Option<&Node> {
         loop {
             let mut game = game.clone();
