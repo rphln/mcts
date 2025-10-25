@@ -61,8 +61,8 @@ fn tree_to_html(mcts: &Mcts, args: &Args, w: &mut impl Write) -> anyhow::Result<
         let mut visits: Vec<u32> = mcts.tree.iter().map(|node| node.visits).collect();
         visits.sort_unstable();
 
-        let top_n = visits.len().saturating_sub(100_000);
-        visits[top_n]
+        let top_k = visits.len().saturating_sub(500_000);
+        visits[top_k]
     };
 
     let max = mcts
