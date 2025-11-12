@@ -83,7 +83,7 @@ impl Game {
             }
 
             let health = f64::from(character.current_health());
-            let score = f64::sqrt(64. * health);
+            let score = 8. + f64::sqrt(64. * health);
 
             if character.team == color {
                 max += score;
