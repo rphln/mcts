@@ -122,7 +122,7 @@ impl Mcts {
             tree: vec![Node::new(SENTINEL, index)],
             history,
             visits_to_expand: 1,
-            exploration_rate: 0.1,
+            exploration_rate: 0.2,
         }
     }
 
