@@ -255,10 +255,10 @@ impl Mcts {
             // Found empirically. See Section 8.4.2 in [1] for other schedules.
             //
             // [1]: <https://papersdb.cs.ualberta.ca/~papersdb/uploaded_files/1029/paper_thesis.pdf>
-            let alpha = f64::sqrt(n / (n + m));
-            assert_matches!(alpha, 0.0..=1.0, "`alpha` should be in [0, 1]");
+            let beta = f64::powi(m / (n + m), 2);
+            assert_matches!(beta, 0.0..=1.0, "`beta` should be in [0, 1]");
 
-            let value = alpha * entry.value + (1. - alpha) * history.value;
+            let value = (1. - beta) * entry.value + beta * history.value;
             if value > best_value {
                 best_index = index;
                 best_value = value;
