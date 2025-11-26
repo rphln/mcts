@@ -236,7 +236,7 @@ fn label(mov: &Move) -> String {
             Color::White => "⚪".to_owned(),
             Color::Black => "⚫".to_owned(),
         },
-        Move::Wait { character } => {
+        Move::Pass { character } => {
             format!("⌛ {label} → Pass", label = CHARACTER[character.0])
         }
         Move::Move { character, destination } => {
