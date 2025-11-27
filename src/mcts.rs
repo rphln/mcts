@@ -273,19 +273,8 @@ impl Mcts {
     /// # Panics
     ///
     /// Panics if no legal moves are available during the roll-out.
-    pub fn default_policy(&self, game: &mut Game, rng: &mut impl Rng) -> f64 {
-        let color = game.color;
-
-        for _ in 0..2 {
-            if game.is_over() {
-                break;
-            }
-
-            let mov = game.moves().choose(rng).expect("`moves` should be non-empty");
-            game.play(&mov);
-        }
-
-        game.evaluate(color)
+    pub fn default_policy(&self, game: &mut Game, _rng: &mut impl Rng) -> f64 {
+        game.evaluate(game.color)
     }
 
     /// Back-propagates the reward from a leaf node up to the root.
