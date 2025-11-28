@@ -255,7 +255,7 @@ impl Mcts {
             // Found empirically. See Section 8.4.2 in [1] for other schedules.
             //
             // [1]: <https://papersdb.cs.ualberta.ca/~papersdb/uploaded_files/1029/paper_thesis.pdf>
-            let beta = f64::powi(m / (n + m), 2);
+            let beta = f64::powi(m / (n + m), 3);
             assert_matches!(beta, 0.0..=1.0, "`beta` should be in [0, 1]");
 
             let value = (1. - beta) * entry.value + beta * history.value;
