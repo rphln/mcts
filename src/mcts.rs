@@ -1,4 +1,4 @@
-use std::{assert_matches::assert_matches, iter::successors, time::Duration};
+use std::{iter::successors, time::Duration};
 
 use indexmap::IndexMap;
 use rand::prelude::*;
@@ -56,7 +56,7 @@ pub struct Mcts {
 }
 
 /// Statistics for a single ply in the game tree.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Node {
     /// Move used to reach this node. Interned through `history`.
     pub mov: usize,
@@ -73,7 +73,7 @@ pub struct Node {
 }
 
 /// Global statistics for a move across the entire tree.
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct History {
     /// Number of visits.
     pub visits: u32,
@@ -101,6 +101,12 @@ impl Node {
     #[must_use]
     pub const fn is_leaf(&self) -> bool {
         self.head == SENTINEL
+    }
+
+    /// Adds a new sample to the running statistics.
+    pub fn update(&mut self, value: f64) {
+        self.value += (value - self.value) / f64::from(self.visits + 1);
+        self.visits += 1;
     }
 }
 
@@ -151,7 +157,7 @@ impl Mcts {
     /// # Panics
     ///
     /// Panics if there are no legal moves available during the search.
-    pub fn expand_and_select(
+    pub fn select_and_expand(
         &mut self,
         node: usize,
         game: &mut Game,
@@ -174,7 +180,7 @@ impl Mcts {
 
         game.play(mov);
 
-        self.expand_and_select(next, game, rng)
+        self.select_and_expand(next, game, rng)
     }
 
     /// Expands a leaf node by generating all legal moves.
@@ -234,31 +240,20 @@ impl Mcts {
             return head;
         }
 
+        let mut best_index = SENTINEL;
+        let mut best_value = f64::NEG_INFINITY;
+
         if rng.random_bool(self.exploration_rate) {
             return rng.random_range(head..last);
         }
 
-        let mut best_index = SENTINEL;
-        let mut best_value = f64::NEG_INFINITY;
-
         for index in head..last {
             let entry = &self.tree[index];
-            let history = &self.history[entry.mov];
-
-            if history.visits == 0 {
+            if entry.visits < 1 {
                 return index;
             }
 
-            let m = f64::from(history.visits);
-            let n = f64::from(entry.visits);
-
-            // Found empirically. See Section 8.4.2 in [1] for other schedules.
-            //
-            // [1]: <https://papersdb.cs.ualberta.ca/~papersdb/uploaded_files/1029/paper_thesis.pdf>
-            let beta = f64::powi(m / (n + m), 3);
-            assert_matches!(beta, 0.0..=1.0, "`beta` should be in [0, 1]");
-
-            let value = (1. - beta) * entry.value + beta * history.value;
+            let value = entry.value;
             if value > best_value {
                 best_index = index;
                 best_value = value;
@@ -290,13 +285,7 @@ impl Mcts {
         let value = -value;
 
         let entry = &mut self.tree[node];
-        let history = &mut self.history[entry.mov];
-
-        entry.visits += 1;
-        entry.value += (value - entry.value) / f64::from(entry.visits);
-
-        history.visits += 1;
-        history.value += (value - history.value) / f64::from(history.visits);
+        entry.update(value);
 
         let parent = entry.parent;
         self.backward(parent, value);
@@ -317,7 +306,7 @@ impl Mcts {
     ) -> Option<&Node> {
         loop {
             let mut game = game.clone();
-            let next = self.expand_and_select(node, &mut game, rng);
+            let next = self.select_and_expand(node, &mut game, rng);
 
             let reward = self.default_policy(&mut game, rng);
             self.backward(next, reward);
