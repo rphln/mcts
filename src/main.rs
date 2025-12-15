@@ -84,7 +84,7 @@ pub fn search(game: &mut Game, args: &Search) -> Move {
     let &Node { mov, .. } = mcts
         .search(0, game, &mut rng, args.time, args.iters, args.nodes)
         .expect("`node` should have children");
-    let (&mov, _) = mcts.history.get_index(mov).unwrap();
+    let &mov = mcts.moves.lookup(mov);
 
     mov
 }

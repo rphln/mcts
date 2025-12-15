@@ -126,7 +126,7 @@ fn node_to_html(
     let mut children: Vec<usize> = (node.head..node.last).collect();
     children.sort_by_key(|&idx| Reverse(mcts.tree[idx].visits));
 
-    let (mov, _) = mcts.history.get_index(node.mov).unwrap();
+    let mov = mcts.moves.lookup(node.mov);
 
     let label = label(mov);
     let value = (node.value - min) / (max - min);

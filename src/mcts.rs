@@ -1,10 +1,11 @@
 use std::{iter::successors, time::Duration};
 
-use indexmap::IndexMap;
 use rand::prelude::*;
-use rustc_hash::FxBuildHasher;
 
-use crate::game::{Game, Move};
+use crate::{
+    game::{Game, Move},
+    interner::{Interned, Interner},
+};
 
 /// An implementation of the Monte Carlo Tree Search algorithm with the
 /// following modifications:
@@ -45,10 +46,8 @@ use crate::game::{Game, Move};
 pub struct Mcts {
     /// See <https://www.cs.cornell.edu/~asampson/blog/flattening.html>.
     pub tree: Vec<Node>,
-    /// Global history statistics for moves.
-    ///
-    /// Also serves as an interner for moves used in nodes.
-    pub history: IndexMap<Move, History, FxBuildHasher>,
+    /// Interner for moves used in nodes.
+    pub moves: Interner<Move>,
     /// See <https://stackoverflow.com/a/35666246>.
     pub visits_to_expand: u32,
     /// Exploration rate (ε) for the ε-greedy policy.
@@ -58,8 +57,8 @@ pub struct Mcts {
 /// Statistics for a single ply in the game tree.
 #[derive(Clone, Debug)]
 pub struct Node {
-    /// Move used to reach this node. Interned through `history`.
-    pub mov: usize,
+    /// Move used to reach this node.
+    pub mov: Interned,
     /// Number of visits.
     pub visits: u32,
     /// Estimated reward.
@@ -72,22 +71,13 @@ pub struct Node {
     pub last: usize,
 }
 
-/// Global statistics for a move across the entire tree.
-#[derive(Clone, Default, Debug)]
-pub struct History {
-    /// Number of visits.
-    pub visits: u32,
-    /// Estimated reward.
-    pub value: f64,
-}
-
 /// Placeholder for an unset node index.
 const SENTINEL: usize = !0;
 
 impl Node {
     /// Creates a new node with default statistics.
     #[must_use]
-    const fn new(parent: usize, mov: usize) -> Self {
+    const fn new(parent: usize, mov: Interned) -> Self {
         Self { mov, visits: 0, value: 0., parent, head: SENTINEL, last: SENTINEL }
     }
 
@@ -117,16 +107,12 @@ impl Mcts {
     /// tree.
     #[must_use]
     pub fn new(root_move: Move) -> Self {
-        let mut history = IndexMap::with_hasher(FxBuildHasher);
-
-        let entry = history.entry(root_move);
-        let index = entry.index();
-
-        let _ = entry.or_default();
+        let mut moves = Interner::default();
+        let handle = moves.intern(root_move);
 
         Self {
-            tree: vec![Node::new(SENTINEL, index)],
-            history,
+            tree: vec![Node::new(SENTINEL, handle)],
+            moves,
             visits_to_expand: 1,
             exploration_rate: 0.2,
         }
@@ -173,11 +159,8 @@ impl Mcts {
         }
 
         let next = self.select_node(node, rng);
-        let (mov, _) = self
-            .history
-            .get_index(self.tree[next].mov)
-            .expect("`mov` should exist `history`");
 
+        let mov = self.moves.lookup(self.tree[next].mov);
         game.play(mov);
 
         self.select_and_expand(next, game, rng)
@@ -202,12 +185,8 @@ impl Mcts {
         let head = self.tree.len();
 
         for mov in game.moves() {
-            let entry = self.history.entry(mov);
-            let index = entry.index();
-
-            let _ = entry.or_default();
-
-            self.tree.push(Node::new(node, index));
+            let handle = self.moves.intern(mov);
+            self.tree.push(Node::new(node, handle));
         }
 
         let last = self.tree.len();
@@ -224,8 +203,7 @@ impl Mcts {
         }
     }
 
-    /// Selects a child node using an epsilon-greedy policy with history-based
-    /// weighting.
+    /// Selects a child node using the epsilon-greedy policy.
     ///
     /// # Panics
     ///
