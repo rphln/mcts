@@ -17,7 +17,7 @@ use swift_swallow_tree_search::{
     mcts::{Mcts, Node},
 };
 
-#[derive(Parser, Debug)]
+#[derive(Debug, Parser)]
 pub struct Args {
     #[clap(default_value = "data/")]
     pub destination: PathBuf,

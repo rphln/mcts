@@ -12,7 +12,7 @@ use swift_swallow_tree_search::{
 };
 
 /// Plots a flamegraph of the MCTS search tree after searching from the root.
-#[derive(Parser, Debug)]
+#[derive(Debug, Parser)]
 pub struct Args {
     /// Path to the output HTML file.
     #[clap(default_value = "/tmp/flamegraph.html")]
