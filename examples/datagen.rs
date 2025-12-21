@@ -19,10 +19,8 @@ use swift_swallow_tree_search::{
 
 #[derive(Debug, Parser)]
 pub struct Args {
-    #[clap(default_value = "data/")]
+    #[clap(default_value = "dist/")]
     pub destination: PathBuf,
-    #[clap(long, default_value_t = 0)]
-    pub seed: u64,
     #[clap(long, value_parser = parse_millis, required_unless_present_any = ["iters", "nodes"])]
     pub time: Option<Duration>,
     #[clap(long, required_unless_present_any = ["time", "nodes"])]
@@ -40,10 +38,10 @@ fn main() -> Result<()> {
     let args = Args::parse();
     create_dir_all(&args.destination)?;
 
-    let mut global_rng = DefaultRng::seed_from_u64(args.seed);
+    let mut thread_rng = rand::rng();
 
     loop {
-        let seed = global_rng.next_u64();
+        let seed = thread_rng.next_u64();
         let mut game = Game::new(seed, true)?;
 
         let mut search_rng = DefaultRng::seed_from_u64(seed);
