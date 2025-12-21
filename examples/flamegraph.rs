@@ -1,3 +1,5 @@
+#![feature(assert_matches)]
+
 use std::{
     cmp::Reverse, fs::File, io::Write, num::ParseIntError, path::PathBuf,
     process::Command, time::Duration,
@@ -10,6 +12,8 @@ use swift_swallow_tree_search::{
     game::{Color, Game, Move},
     mcts::Mcts,
 };
+
+use crate::colors::{PALETTE_SPECTRAL, interpolate_gradient};
 
 /// Plots a flamegraph of the MCTS search tree after searching from the root.
 #[derive(Debug, Parser)]
@@ -144,14 +148,26 @@ fn node_to_html(
         value = node.value
     );
 
+    let color = interpolate_gradient(value, &PALETTE_SPECTRAL);
+
     writeln!(w, r#"<div class="node" style="--width: {width:.3}%">"#)?;
-    writeln!(w, r#"  <div class="bar" style="--value: {value:.3}" title="{title}">"#)?;
+    writeln!(
+        w,
+        r#"  <button class="bar" style="--color: oklab({l} {a} {b})" title="{title}">"#,
+        l = color.l,
+        a = color.a,
+        b = color.b,
+    )?;
     writeln!(w, r#"    <span class="label">{label}</span>"#)?;
-    writeln!(w, r"  </div>")?;
+    writeln!(w, r"  </button>")?;
+
+    writeln!(w, r#"  <div class="children">"#)?;
 
     for child in children {
         node_to_html(child, mcts, pruning_threshold, min, max, w)?;
     }
+
+    writeln!(w, r"  </div>")?;
 
     writeln!(w, r"</div>")?;
 
@@ -266,3 +282,58 @@ fn label(mov: &Move) -> String {
 }
 
 // endregion
+
+mod colors {
+    use std::{assert_matches::assert_matches, cmp::min};
+
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    pub struct Oklab {
+        pub l: f64,
+        pub a: f64,
+        pub b: f64,
+    }
+
+    /// From <https://colorbrewer2.org/#type=diverging&scheme=Spectral&n=11>.
+    pub const PALETTE_SPECTRAL: [Oklab; 11] = [
+        Oklab { l: 0.484, a: 0.042, b: -0.122 }, // #5e4fa2
+        Oklab { l: 0.599, a: -0.057, b: -0.099 }, // #3288bd
+        Oklab { l: 0.749, a: -0.097, b: 0.016 }, // #66c2a5
+        Oklab { l: 0.848, a: -0.073, b: 0.058 }, // #abdda4
+        Oklab { l: 0.938, a: -0.052, b: 0.106 }, // #e6f598
+        Oklab { l: 0.985, a: -0.025, b: 0.077 }, // #ffffbf
+        Oklab { l: 0.913, a: -0.001, b: 0.110 }, // #fee08b
+        Oklab { l: 0.812, a: 0.059, b: 0.117 },  // #fdae61
+        Oklab { l: 0.692, a: 0.139, b: 0.108 },  // #f46d43
+        Oklab { l: 0.589, a: 0.177, b: 0.061 },  // #d53e4f
+        Oklab { l: 0.448, a: 0.177, b: 0.024 },  // #9e0142
+    ];
+
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation
+    )]
+    pub fn interpolate_gradient(t: f64, colors: &[Oklab]) -> Oklab {
+        let n = colors.len();
+
+        assert_matches!(n, 2..);
+        assert_matches!(t, 0.0..=1.0);
+
+        let segments = (n - 1) as f64;
+        let position = t * segments;
+
+        let idx = position as usize;
+        assert!(idx < n);
+
+        let p = position - (idx as f64);
+
+        let start = colors[idx];
+        let end = colors[min(idx + 1, n - 1)];
+
+        Oklab {
+            l: start.l + (end.l - start.l) * p,
+            a: start.a + (end.a - start.a) * p,
+            b: start.b + (end.b - start.b) * p,
+        }
+    }
+}
