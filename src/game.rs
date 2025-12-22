@@ -82,8 +82,9 @@ impl Game {
                 continue;
             }
 
+            // Found with `swift_swallow_tree_search.examples.fit`.
             let health = f64::from(character.current_health());
-            let score = 8. + f64::sqrt(64. * health);
+            let score = 0.56 + 0.16 * f64::sqrt(health);
 
             if character.team == color {
                 max += score;

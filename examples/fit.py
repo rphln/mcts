@@ -1,21 +1,13 @@
-#!/usr/bin/env python3
-
-import argparse
 import json
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    accuracy_score,
-    balanced_accuracy_score,
-    classification_report,
-    confusion_matrix,
-    log_loss,
-)
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
+import torch
+from torch import nn
+from torch.optim import Adam
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.utils.data import DataLoader, TensorDataset
+from tqdm import tqdm, trange
 
 
 def load_turn_samples(paths: list[Path]):
@@ -31,15 +23,16 @@ def load_turn_samples(paths: list[Path]):
         match data["match_outcome"]:
             case "Draw":
                 continue
-            case y:
-                pass
+            case "WhiteWins":
+                y = 1.0
+            case "BlackWins":
+                y = 0.0
+            case _:
+                raise ValueError()
 
         for w, b in zip(hw, hb, strict=True):
             w = sorted(w)
             b = sorted(b)
-
-            w = np.array(w)
-            b = np.array(b)
 
             row = {
                 "y": y,
@@ -62,60 +55,66 @@ def load_turn_samples(paths: list[Path]):
     return X, y
 
 
-def read_class(path: Path) -> str:
-    with path.open() as file:
-        data = json.load(file)
-
-    return data["match_outcome"]
-
-
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--data-dir", required=True, type=Path)
-    parser.add_argument("--test-size", type=float, default=0.2)
-    args = parser.parse_args()
+    device = "cuda"
 
-    files = sorted(Path(args.data_dir).glob("*.json"))
-    classes = list(map(read_class, files))
+    lr = 1e-2
+    batch_size = 8192
+    epochs = 256
 
-    train_files, test_files = train_test_split(
-        files, test_size=args.test_size, random_state=42, stratify=classes
+    files = sorted(Path("dist/").rglob("*.json"))
+    X, y = load_turn_samples(files)
+
+    X = torch.from_numpy(X.to_numpy()).to(device)
+    y = torch.from_numpy(y.to_numpy()).to(device)
+
+    A = nn.Parameter(torch.ones(1, device=device))
+    B = nn.Parameter(torch.ones(1, device=device))
+
+    optim = Adam([A, B], lr=lr)
+    sched = ReduceLROnPlateau(optim, patience=10, factor=0.5)
+
+    dataset = TensorDataset(X, y)
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=True,
+        num_workers=0,
     )
 
-    X_train, y_train = load_turn_samples(train_files)
-    X_test, y_test = load_turn_samples(test_files)
+    with trange(1, epochs + 1) as pbar:
+        for _epoch in pbar:
+            epoch_loss = 0.0
+            epoch_accuracy = 0.0
 
-    labels = LabelEncoder()
+            for batch_idx, (x, y) in enumerate(tqdm(loader, leave=False)):
+                preds = A * (x > 0) + B * torch.sqrt(x)
 
-    y_train = labels.fit_transform(y_train)
-    y_test = labels.transform(y_test)
+                max_sum = preds[:, 4:8].sum(dim=1)
+                min_sum = preds[:, 0:4].sum(dim=1)
 
-    clf = LogisticRegression(
-        random_state=42,
-        fit_intercept=True,
-        class_weight="balanced",
-        penalty="l2",
-    )
-    clf.fit(X_train, y_train)
+                logits = max_sum - min_sum
 
-    y_pred = clf.predict(X_test)
-    y_proba = clf.predict_proba(X_test)
+                loss = nn.functional.binary_cross_entropy_with_logits(logits, y)
+                loss.backward()
 
-    print(clf.feature_names_in_)
-    print(clf.coef_, clf.intercept_)
+                optim.step()
+                optim.zero_grad()
 
-    print(f"Train samples: {len(X_train)}")
-    print(f"Test samples:  {len(y_test)}")
-    print(f"Accuracy: {accuracy_score(y_test, y_pred):.6f}")
-    print(f"Balanced accuracy: {balanced_accuracy_score(y_test, y_pred):.6f}")
-    print(f"Log loss: {log_loss(y_test, y_proba):.6f}")
-    print()
+                epoch_loss += (loss.item() - epoch_loss) / (batch_idx + 1)
 
-    print("Classification report:")
-    print(classification_report(y_test, y_pred, target_names=labels.classes_))
-    print("Confusion matrix (rows=true, cols=pred)")
-    print("Class order:", list(labels.classes_))
-    print(confusion_matrix(y_test, y_pred))
+                accuracy = ((y == 1.0) == (logits >= 0.0)).float().mean()
+                epoch_accuracy += (accuracy.item() - epoch_accuracy) / (batch_idx + 1)
+
+            sched.step(epoch_loss)
+
+            pbar.set_postfix(
+                loss=epoch_loss,
+                accuracy=epoch_accuracy,
+                attack_scale=A.item(),
+                health_scale=B.item(),
+            )
 
 
 if __name__ == "__main__":

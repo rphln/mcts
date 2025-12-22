@@ -45,8 +45,16 @@ pub fn main() -> anyhow::Result<()> {
 
     let _next = mcts.search(0, &game, &mut rng, args.time, args.iters, args.nodes);
 
+    let pruning_threshold = {
+        let mut visits: Vec<u32> = mcts.tree.iter().map(|node| node.visits).collect();
+        visits.sort_unstable();
+
+        let top_k = visits.len().saturating_sub(100_000);
+        visits[top_k]
+    };
+
     let mut file = File::create(&args.destination)?;
-    tree_to_html(&mcts, &args, &mut file)?;
+    tree_to_html(&mcts, pruning_threshold, &args, &mut file)?;
 
     let _ = Command::new("open").arg(&args.destination).spawn()?;
 
@@ -58,24 +66,18 @@ fn parse_millis(arg: &str) -> Result<Duration, ParseIntError> {
     Ok(Duration::from_millis(millis))
 }
 
+fn sigmoid(x: f64) -> f64 {
+    1. / (1. + f64::exp(-x))
+}
+
 // region: Plotting.
 
-fn tree_to_html(mcts: &Mcts, args: &Args, w: &mut impl Write) -> anyhow::Result<()> {
-    let pruning_threshold = {
-        let mut visits: Vec<u32> = mcts.tree.iter().map(|node| node.visits).collect();
-        visits.sort_unstable();
-
-        let top_k = visits.len().saturating_sub(500_000);
-        visits[top_k]
-    };
-
-    let max = mcts
-        .tree
-        .iter()
-        .filter(|node| node.visits > pruning_threshold)
-        .fold(0., |max, node| f64::max(max, f64::abs(node.value)));
-    let min = -max;
-
+fn tree_to_html(
+    mcts: &Mcts,
+    pruning_threshold: u32,
+    args: &Args,
+    w: &mut impl Write,
+) -> anyhow::Result<()> {
     writeln!(w, r"<!doctype html>")?;
     writeln!(w, r#"<html lang="en">"#)?;
 
@@ -105,7 +107,7 @@ fn tree_to_html(mcts: &Mcts, args: &Args, w: &mut impl Write) -> anyhow::Result<
     writeln!(w, r"    <pre><samp>{args:#?}</samp></pre>")?;
     writeln!(w, r"  </details>")?;
 
-    node_to_html(0, mcts, pruning_threshold, min, max, w)?;
+    node_to_html(0, mcts, pruning_threshold, true, w)?;
 
     writeln!(w, r"  </body>")?;
 
@@ -118,12 +120,11 @@ fn node_to_html(
     node: usize,
     mcts: &Mcts,
     pruning_threshold: u32,
-    min: f64,
-    max: f64,
+    is_pv: bool,
     w: &mut impl Write,
 ) -> anyhow::Result<()> {
     let node = &mcts.tree[node];
-    if node.visits <= pruning_threshold {
+    if !is_pv && node.visits <= pruning_threshold {
         return Ok(());
     }
 
@@ -133,7 +134,7 @@ fn node_to_html(
     let mov = mcts.moves.lookup(node.mov);
 
     let label = label(mov);
-    let value = (node.value - min) / (max - min);
+    let value = sigmoid(node.value);
 
     let width = if node.is_root() {
         100.
@@ -143,9 +144,10 @@ fn node_to_html(
     };
 
     let title = format!(
-        r"{label}&#10;Visits: {visits}&#10;Value: {value:.3}",
+        r"{label}&#10;Visits: {visits}&#10;Value: {value:.3}&#10;Probability: {proba:.3}%",
         visits = node.visits,
-        value = node.value
+        value = node.value,
+        proba = 100. * value
     );
 
     let color = interpolate_gradient(value, &PALETTE_SPECTRAL);
@@ -163,8 +165,8 @@ fn node_to_html(
 
     writeln!(w, r#"  <div class="children">"#)?;
 
-    for child in children {
-        node_to_html(child, mcts, pruning_threshold, min, max, w)?;
+    for (idx, child) in children.into_iter().enumerate() {
+        node_to_html(child, mcts, pruning_threshold, is_pv && idx == 0, w)?;
     }
 
     writeln!(w, r"  </div>")?;

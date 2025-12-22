@@ -27,6 +27,8 @@ pub struct Args {
     pub iters: Option<u32>,
     #[clap(long, required_unless_present_any = ["time", "iters"])]
     pub nodes: Option<usize>,
+    #[arg(long, default_value_t = 1024)]
+    game_len: usize,
 }
 
 fn parse_millis(arg: &str) -> Result<Duration, std::num::ParseIntError> {
@@ -46,12 +48,16 @@ fn main() -> Result<()> {
 
         let mut search_rng = DefaultRng::seed_from_u64(seed);
 
-        let mut white_healths: Vec<Vec<i32>> = Vec::new();
-        let mut black_healths: Vec<Vec<i32>> = Vec::new();
+        let mut white_healths = Vec::new();
+        let mut black_healths = Vec::new();
 
         let start_time = Instant::now();
 
-        while !game.is_over() {
+        for _turn in 0..args.game_len {
+            if game.is_over() {
+                break;
+            }
+
             let mov =
                 search(&mut game, &mut search_rng, args.time, args.iters, args.nodes);
             game.play(&mov);
@@ -72,6 +78,7 @@ fn main() -> Result<()> {
 
         let elapsed = start_time.elapsed();
         let outcome = match game.world.active_team() {
+            _ if !game.is_over() => Outcome::Draw,
             Color::White => Outcome::WhiteWins,
             Color::Black => Outcome::BlackWins,
         };
