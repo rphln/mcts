@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import torch
 from torch import nn
-from torch.optim import Adam
+from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm, trange
@@ -17,12 +17,9 @@ def load_turn_samples(paths: list[Path]):
         with path.open() as file:
             data = json.load(file)
 
-        hw = data["health_white"]
-        hb = data["health_black"]
-
-        match data["match_outcome"]:
+        match data["outcome"]:
             case "Draw":
-                continue
+                y = 0.5
             case "WhiteWins":
                 y = 1.0
             case "BlackWins":
@@ -30,20 +27,25 @@ def load_turn_samples(paths: list[Path]):
             case _:
                 raise ValueError()
 
-        for w, b in zip(hw, hb, strict=True):
-            w = sorted(w)
-            b = sorted(b)
-
+        for _idx, sample in enumerate(data["samples"]):
             row = {
                 "y": y,
-                "b_0": b[0],
-                "b_1": b[1],
-                "b_2": b[2],
-                "b_3": b[3],
-                "w_0": w[0],
-                "w_1": w[1],
-                "w_2": w[2],
-                "w_3": w[3],
+                "b_h_0": sample["black_healths"][0],
+                "b_h_1": sample["black_healths"][1],
+                "b_h_2": sample["black_healths"][2],
+                "b_h_3": sample["black_healths"][3],
+                "w_h_0": sample["white_healths"][0],
+                "w_h_1": sample["white_healths"][1],
+                "w_h_2": sample["white_healths"][2],
+                "w_h_3": sample["white_healths"][3],
+                "b_c_0": sample["black_ready_at"][0],
+                "b_c_1": sample["black_ready_at"][1],
+                "b_c_2": sample["black_ready_at"][2],
+                "b_c_3": sample["black_ready_at"][3],
+                "w_c_0": sample["white_ready_at"][0],
+                "w_c_1": sample["white_ready_at"][1],
+                "w_c_2": sample["white_ready_at"][2],
+                "w_c_3": sample["white_ready_at"][3],
             }
             rows.append(row)
 
@@ -70,8 +72,9 @@ def main():
 
     A = nn.Parameter(torch.ones(1, device=device))
     B = nn.Parameter(torch.ones(1, device=device))
+    C = nn.Parameter(torch.ones(1, device=device))
 
-    optim = Adam([A, B], lr=lr)
+    optim = AdamW([A, B, C], lr=lr)
     sched = ReduceLROnPlateau(optim, patience=10, factor=0.5)
 
     dataset = TensorDataset(X, y)
@@ -89,7 +92,10 @@ def main():
             epoch_accuracy = 0.0
 
             for batch_idx, (x, y) in enumerate(tqdm(loader, leave=False)):
-                preds = A * (x > 0) + B * torch.sqrt(x)
+                health = x[:, 0:8]
+                _ready_at = x[:, 8:16]
+
+                preds = A * (health > 0) + B * torch.sqrt(health)
 
                 max_sum = preds[:, 4:8].sum(dim=1)
                 min_sum = preds[:, 0:4].sum(dim=1)
@@ -104,7 +110,9 @@ def main():
 
                 epoch_loss += (loss.item() - epoch_loss) / (batch_idx + 1)
 
-                accuracy = ((y == 1.0) == (logits >= 0.0)).float().mean()
+                accuracy = ((y == 1.0) == (logits >= 0.0)).float()
+                accuracy = accuracy[y != 0.5].mean()
+
                 epoch_accuracy += (accuracy.item() - epoch_accuracy) / (batch_idx + 1)
 
             sched.step(epoch_loss)
@@ -112,8 +120,9 @@ def main():
             pbar.set_postfix(
                 loss=epoch_loss,
                 accuracy=epoch_accuracy,
-                attack_scale=A.item(),
-                health_scale=B.item(),
+                A=A.item(),
+                B=B.item(),
+                C=C.item(),
             )
 
 

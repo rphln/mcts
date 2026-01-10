@@ -47,9 +47,7 @@ fn main() -> Result<()> {
         let mut game = Game::new(seed, true)?;
 
         let mut search_rng = DefaultRng::seed_from_u64(seed);
-
-        let mut white_healths = Vec::new();
-        let mut black_healths = Vec::new();
+        let mut samples = vec![];
 
         let start_time = Instant::now();
 
@@ -62,18 +60,32 @@ fn main() -> Result<()> {
                 search(&mut game, &mut search_rng, args.time, args.iters, args.nodes);
             game.play(&mov);
 
-            let mut curr_white = Vec::new();
-            let mut curr_black = Vec::new();
+            let mut white_healths = vec![];
+            let mut black_healths = vec![];
+
+            let mut white_ready_at = vec![];
+            let mut black_ready_at = vec![];
 
             for character in &game.world.characters {
                 match character.team {
-                    Color::White => curr_white.push(character.current_health()),
-                    Color::Black => curr_black.push(character.current_health()),
+                    Color::White => {
+                        white_healths.push(character.current_health());
+                        white_ready_at.push(character.ready_at - game.world.tick);
+                    }
+                    Color::Black => {
+                        black_healths.push(character.current_health());
+                        black_ready_at.push(character.ready_at - game.world.tick);
+                    }
                 }
             }
 
-            white_healths.push(curr_white);
-            black_healths.push(curr_black);
+            let sample = json!({
+                "white_healths": white_healths,
+                "black_healths": black_healths,
+                "white_ready_at": white_ready_at,
+                "black_ready_at": black_ready_at,
+            });
+            samples.push(sample);
         }
 
         let elapsed = start_time.elapsed();
@@ -84,12 +96,11 @@ fn main() -> Result<()> {
         };
 
         let value = json!({
-            "match_outcome": outcome,
-            "health_white": white_healths,
-            "health_black": black_healths,
+            "outcome": outcome,
+            "samples": samples,
             "meta": {
                 "seed": seed,
-                "turns": white_healths.len(),
+                "turns": samples.len(),
                 "elapsed": elapsed.as_millis(),
                 "mcts": {
                     "time": args.time.map(|d| d.as_millis()),
