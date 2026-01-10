@@ -132,11 +132,12 @@ fn node_to_html(
     children.sort_by_key(|&idx| Reverse(mcts.tree[idx].visits));
 
     let mov = mcts.moves.lookup(node.mov);
-
     let label = label(mov);
-    let value = sigmoid(node.value);
 
-    let width = if node.is_root() {
+    let q_value = node.value;
+    let predicted_win_rate = sigmoid(q_value);
+
+    let parent_visit_share = if node.is_root() {
         100.
     } else {
         let parent = &mcts.tree[node.parent];
@@ -144,15 +145,14 @@ fn node_to_html(
     };
 
     let title = format!(
-        r"{label}&#10;Visits: {visits}&#10;Value: {value:.3}&#10;Probability: {proba:.3}%",
+        r"{label}&#10;&#10;Visits: {visits}&#10;Share of parent's visits: {parent_visit_share:.3}%&#10;Mean value (Q): {q_value:.3}&#10;Predicted win rate: {win_rate:.2}%",
         visits = node.visits,
-        value = node.value,
-        proba = 100. * value
+        win_rate = 100. * predicted_win_rate,
     );
 
-    let color = interpolate_gradient(value, &PALETTE_SPECTRAL);
+    let color = interpolate_gradient(predicted_win_rate, &PALETTE_SPECTRAL);
 
-    writeln!(w, r#"<div class="node" style="--width: {width:.3}%">"#)?;
+    writeln!(w, r#"<div class="node" style="--width: {parent_visit_share:.3}%">"#)?;
     writeln!(
         w,
         r#"  <button class="bar" style="--color: oklab({l} {a} {b})" title="{title}">"#,
@@ -170,7 +170,6 @@ fn node_to_html(
     }
 
     writeln!(w, r"  </div>")?;
-
     writeln!(w, r"</div>")?;
 
     Ok(())
