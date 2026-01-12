@@ -36,7 +36,7 @@ fn main() -> anyhow::Result<()> {
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Play(args) => {
-                game.play(&args.mov);
+                game.play(args.mov);
 
                 // TODO: Handle draws.
                 let res = match game.world.active_team() {

@@ -160,7 +160,7 @@ impl Mcts {
 
         let next = self.select_node(node, rng);
 
-        let mov = self.moves.lookup(self.tree[next].mov);
+        let &mov = self.moves.lookup(self.tree[next].mov);
         game.play(mov);
 
         self.select_and_expand(next, game, rng)

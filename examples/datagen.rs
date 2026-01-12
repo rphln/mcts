@@ -58,7 +58,7 @@ fn main() -> Result<()> {
 
             let mov =
                 search(&mut game, &mut search_rng, args.time, args.iters, args.nodes);
-            game.play(&mov);
+            game.play(mov);
 
             let mut white_healths = vec![];
             let mut black_healths = vec![];
