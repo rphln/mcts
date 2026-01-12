@@ -71,28 +71,65 @@ impl Game {
         self.depth += 1;
     }
 
-    /// Heuristic evaluation from the perspective of `color`.
+    /// Heuristic score from `color`'s perspective.
+    ///
+    /// Returns `predict()` for White and `-predict()` for Black (symmetric for
+    /// negamax).
     #[must_use]
     pub fn evaluate(&self, color: Color) -> f64 {
-        let mut max = 0.;
-        let mut min = 0.;
-
-        for character in &self.world.characters {
-            if character.is_defeated() {
-                continue;
-            }
-
-            // Found with `swift_swallow_tree_search.examples.fit`.
-            let health = f64::from(character.current_health());
-            let score = 0.56 + 0.16 * f64::sqrt(health);
-
-            if character.team == color {
-                max += score;
-            } else {
-                min += score;
-            }
+        match color {
+            Color::White => self.predict(),
+            Color::Black => -self.predict(),
         }
-
-        max - min
     }
+
+    /// Estimated probability White wins: `sigmoid(predict())`.
+    ///
+    /// See [`Self::predict`] for model and training details.
+    #[must_use]
+    pub fn predict_proba(&self) -> f64 {
+        sigmoid(self.predict())
+    }
+
+    /// Raw logit for White (positive → White, negative → Black).
+    ///
+    /// Weighted sum of active characters' features plus bias. Model fitted
+    /// with `swift_swallow_tree_search.examples.fit` and validated via a
+    /// train/test split.
+    #[must_use]
+    pub fn predict(&self) -> f64 {
+        const BASE_WEIGHT: f64 = 0.56;
+        const HEALTH_WEIGHT: f64 = 0.16;
+        const READY_WEIGHT: f64 = 0.;
+
+        const BIAS: f64 = 0.;
+
+        let score: f64 = self
+            .world
+            .characters
+            .iter()
+            .filter(|character| !character.is_defeated())
+            .map(|character| {
+                let health = f64::from(character.current_health());
+                let ready_at = f64::from(character.ready_at - self.world.tick);
+
+                let score = BASE_WEIGHT
+                    + HEALTH_WEIGHT * health.sqrt()
+                    + READY_WEIGHT * ready_at;
+
+                match character.team {
+                    Color::White => score,
+                    Color::Black => -score,
+                }
+            })
+            .sum();
+
+        score + BIAS
+    }
+}
+
+/// Logistic sigmoid: `1.0 / (1.0 + (-x).exp())`.
+#[inline]
+fn sigmoid(x: f64) -> f64 {
+    1.0 / (1.0 + (-x).exp())
 }
