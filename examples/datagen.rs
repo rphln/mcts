@@ -21,19 +21,8 @@ use swift_swallow_tree_search::{
 pub struct Args {
     #[clap(default_value = "dist/")]
     pub destination: PathBuf,
-    #[clap(long, value_parser = parse_millis, required_unless_present_any = ["iters", "nodes"])]
-    pub time: Option<Duration>,
-    #[clap(long, required_unless_present_any = ["time", "nodes"])]
-    pub iters: Option<u32>,
-    #[clap(long, required_unless_present_any = ["time", "iters"])]
-    pub nodes: Option<usize>,
-    #[arg(long, default_value_t = 1024)]
-    game_len: usize,
-}
-
-fn parse_millis(arg: &str) -> Result<Duration, std::num::ParseIntError> {
-    let millis = arg.parse::<u64>()?;
-    Ok(Duration::from_millis(millis))
+    #[clap(long, default_value_t = 65_536)]
+    pub iters: u32,
 }
 
 fn main() -> Result<()> {
@@ -51,17 +40,12 @@ fn main() -> Result<()> {
 
         let start_time = Instant::now();
 
-        for _turn in 0..args.game_len {
-            if game.is_over() {
-                break;
-            }
-
-            let mov =
-                search(&mut game, &mut search_rng, args.time, args.iters, args.nodes);
+        while !game.is_over() {
+            let mov = search(&mut game, &mut search_rng, None, Some(args.iters), None);
             game.play(mov);
 
-            let mut white_healths = vec![];
-            let mut black_healths = vec![];
+            let mut white_health = vec![];
+            let mut black_health = vec![];
 
             let mut white_ready_at = vec![];
             let mut black_ready_at = vec![];
@@ -69,28 +53,30 @@ fn main() -> Result<()> {
             for character in &game.world.characters {
                 match character.team {
                     Color::White => {
-                        white_healths.push(character.current_health());
-                        white_ready_at.push(character.ready_at - game.world.tick);
+                        white_health.push(character.current_health());
+                        white_ready_at.push(character.ready_at);
                     }
                     Color::Black => {
-                        black_healths.push(character.current_health());
-                        black_ready_at.push(character.ready_at - game.world.tick);
+                        black_health.push(character.current_health());
+                        black_ready_at.push(character.ready_at);
                     }
                 }
             }
 
             let sample = json!({
-                "white_healths": white_healths,
-                "black_healths": black_healths,
+                "tick": game.world.tick,
+                "white_health": white_health,
+                "black_health": black_health,
                 "white_ready_at": white_ready_at,
                 "black_ready_at": black_ready_at,
             });
             samples.push(sample);
         }
 
+        assert!(game.is_over());
+
         let elapsed = start_time.elapsed();
         let outcome = match game.world.active_team() {
-            _ if !game.is_over() => Outcome::Draw,
             Color::White => Outcome::WhiteWins,
             Color::Black => Outcome::BlackWins,
         };
@@ -102,11 +88,7 @@ fn main() -> Result<()> {
                 "seed": seed,
                 "turns": samples.len(),
                 "elapsed": elapsed.as_millis(),
-                "mcts": {
-                    "time": args.time.map(|d| d.as_millis()),
-                    "iters": args.iters,
-                    "nodes": args.nodes,
-                }
+                "search_iters": args.iters,
             }
         });
 

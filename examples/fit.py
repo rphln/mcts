@@ -1,16 +1,33 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
-import torch
-from torch import nn
-from torch.optim import AdamW
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader, TensorDataset
-from tqdm import tqdm, trange
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report
+from sklearn.model_selection import train_test_split
 
 
-def load_turn_samples(paths: list[Path]):
+def _sample_to_features(sample: dict) -> dict:
+    t = sample["tick"]
+
+    w_h = np.array(sample["white_health"])
+    b_h = np.array(sample["black_health"])
+
+    w_t = np.array(sample["white_ready_at"])
+    b_t = np.array(sample["black_ready_at"])
+
+    w_c = (w_h > 0) * (w_t - t)
+    b_c = (b_h > 0) * (b_t - t)
+
+    return {
+        "h_0": np.count_nonzero(w_h > 0) - np.count_nonzero(b_h > 0),
+        "h_1": np.sum(w_h**0.5) - np.sum(b_h**0.5),
+        "c_1": np.sum(w_c) - np.sum(b_c),
+    }
+
+
+def load_turn_samples(paths: list[Path], max_seq_len: int = 1024):
     rows = []
 
     for path in paths:
@@ -19,111 +36,42 @@ def load_turn_samples(paths: list[Path]):
 
         match data["outcome"]:
             case "Draw":
-                y = 0.5
+                continue
             case "WhiteWins":
-                y = 1.0
+                y = 1
             case "BlackWins":
-                y = 0.0
+                y = 0
             case _:
                 raise ValueError()
 
-        for _idx, sample in enumerate(data["samples"]):
-            row = {
-                "y": y,
-                "b_h_0": sample["black_healths"][0],
-                "b_h_1": sample["black_healths"][1],
-                "b_h_2": sample["black_healths"][2],
-                "b_h_3": sample["black_healths"][3],
-                "w_h_0": sample["white_healths"][0],
-                "w_h_1": sample["white_healths"][1],
-                "w_h_2": sample["white_healths"][2],
-                "w_h_3": sample["white_healths"][3],
-                "b_c_0": sample["black_ready_at"][0],
-                "b_c_1": sample["black_ready_at"][1],
-                "b_c_2": sample["black_ready_at"][2],
-                "b_c_3": sample["black_ready_at"][3],
-                "w_c_0": sample["white_ready_at"][0],
-                "w_c_1": sample["white_ready_at"][1],
-                "w_c_2": sample["white_ready_at"][2],
-                "w_c_3": sample["white_ready_at"][3],
-            }
-            rows.append(row)
+        for sample in data["samples"][-max_seq_len:]:
+            row = _sample_to_features(sample)
+            rows.append({"y": y, **row})
 
     df = pd.DataFrame(rows)
 
-    X = df.drop(columns=["y"])
+    x = df.drop(columns=["y"])
     y = df["y"]
 
-    return X, y
+    return x, y
 
 
 def main():
-    device = "cuda"
+    files = sorted(Path("dist").rglob("*.json"))
+    train_files, test_files = train_test_split(files, test_size=0.2, random_state=0)
 
-    lr = 1e-2
-    batch_size = 8192
-    epochs = 256
+    x_train, y_train = load_turn_samples(train_files)
+    x_test, y_test = load_turn_samples(test_files)
 
-    files = sorted(Path("dist/").rglob("*.json"))
-    X, y = load_turn_samples(files)
+    clf = LogisticRegression(random_state=0)
+    clf.fit(x_train, y_train)
 
-    X = torch.from_numpy(X.to_numpy()).to(device)
-    y = torch.from_numpy(y.to_numpy()).to(device)
+    print("Coefficients:", clf.coef_)
+    print("Intercept:", clf.intercept_)
+    print()
 
-    A = nn.Parameter(torch.ones(1, device=device))
-    B = nn.Parameter(torch.ones(1, device=device))
-    C = nn.Parameter(torch.ones(1, device=device))
-
-    optim = AdamW([A, B, C], lr=lr)
-    sched = ReduceLROnPlateau(optim, patience=10, factor=0.5)
-
-    dataset = TensorDataset(X, y)
-    loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        drop_last=True,
-        num_workers=0,
-    )
-
-    with trange(1, epochs + 1) as pbar:
-        for _epoch in pbar:
-            epoch_loss = 0.0
-            epoch_accuracy = 0.0
-
-            for batch_idx, (x, y) in enumerate(tqdm(loader, leave=False)):
-                health = x[:, 0:8]
-                _ready_at = x[:, 8:16]
-
-                preds = A * (health > 0) + B * torch.sqrt(health)
-
-                max_sum = preds[:, 4:8].sum(dim=1)
-                min_sum = preds[:, 0:4].sum(dim=1)
-
-                logits = max_sum - min_sum
-
-                loss = nn.functional.binary_cross_entropy_with_logits(logits, y)
-                loss.backward()
-
-                optim.step()
-                optim.zero_grad()
-
-                epoch_loss += (loss.item() - epoch_loss) / (batch_idx + 1)
-
-                accuracy = ((y == 1.0) == (logits >= 0.0)).float()
-                accuracy = accuracy[y != 0.5].mean()
-
-                epoch_accuracy += (accuracy.item() - epoch_accuracy) / (batch_idx + 1)
-
-            sched.step(epoch_loss)
-
-            pbar.set_postfix(
-                loss=epoch_loss,
-                accuracy=epoch_accuracy,
-                A=A.item(),
-                B=B.item(),
-                C=C.item(),
-            )
+    y_pred = clf.predict(x_test)
+    print(classification_report(y_test, y_pred))
 
 
 if __name__ == "__main__":
