@@ -50,6 +50,8 @@ fn main() -> Result<()> {
             let mut white_ready_at = vec![];
             let mut black_ready_at = vec![];
 
+            let active_team = game.world.active_team();
+
             for character in &game.world.characters {
                 match character.team {
                     Color::White => {
@@ -65,6 +67,7 @@ fn main() -> Result<()> {
 
             let sample = json!({
                 "tick": game.world.tick,
+                "team": active_team,
                 "white_health": white_health,
                 "black_health": black_health,
                 "white_ready_at": white_ready_at,
