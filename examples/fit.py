@@ -9,25 +9,16 @@ from sklearn.model_selection import train_test_split
 
 
 def _sample_to_features(sample: dict) -> dict:
-    t = sample["tick"]
-
-    w_h = np.array(sample["white_health"])
-    b_h = np.array(sample["black_health"])
-
-    w_t = np.array(sample["white_ready_at"])
-    b_t = np.array(sample["black_ready_at"])
-
-    w_c = (w_h > 0) * (w_t - t)
-    b_c = (b_h > 0) * (b_t - t)
+    w = np.array(sample["white_health"])
+    b = np.array(sample["black_health"])
 
     return {
-        "h_0": np.count_nonzero(w_h > 0) - np.count_nonzero(b_h > 0),
-        "h_1": np.sum(w_h**0.5) - np.sum(b_h**0.5),
-        "c_1": np.sum(w_c) - np.sum(b_c),
+        "_0": np.count_nonzero(w > 0) - np.count_nonzero(b > 0),
+        "_1": np.sum(np.sqrt(w)) - np.sum(np.sqrt(b)),
     }
 
 
-def load_turn_samples(paths: list[Path], max_seq_len: int = 1024):
+def load_turn_samples(paths: list[Path], max_seq_len: int = 128):
     rows = []
 
     for path in paths:
@@ -57,13 +48,15 @@ def load_turn_samples(paths: list[Path], max_seq_len: int = 1024):
 
 
 def main():
+    np.set_printoptions(precision=3)
+
     files = sorted(Path("dist").rglob("*.json"))
-    train_files, test_files = train_test_split(files, test_size=0.2, random_state=0)
+    train_files, test_files = train_test_split(files, test_size=0.1, random_state=0)
 
     x_train, y_train = load_turn_samples(train_files)
     x_test, y_test = load_turn_samples(test_files)
 
-    clf = LogisticRegression(random_state=0)
+    clf = LogisticRegression(random_state=0, fit_intercept=False)
     clf.fit(x_train, y_train)
 
     print("Coefficients:", clf.coef_)
