@@ -18,7 +18,7 @@ def _sample_to_features(sample: dict) -> dict:
     }
 
 
-def load_turn_samples(paths: list[Path], max_seq_len: int = 128):
+def load_turn_samples(paths: list[Path], max_seq_len: int = 64):
     rows = []
 
     for path in paths:
@@ -29,9 +29,9 @@ def load_turn_samples(paths: list[Path], max_seq_len: int = 128):
             case "Draw":
                 continue
             case "WhiteWins":
-                y = 1
+                y = True
             case "BlackWins":
-                y = 0
+                y = False
             case _:
                 raise ValueError()
 

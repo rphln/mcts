@@ -74,8 +74,8 @@ impl Game {
     /// Heuristic score from `color`'s perspective.
     #[must_use]
     pub fn evaluate(&self, color: Color) -> f64 {
-        const BASE_WEIGHT: f64 = 0.56;
-        const HEALTH_WEIGHT: f64 = 0.16;
+        const BASE_WEIGHT: f64 = 0.614;
+        const HEALTH_WEIGHT: f64 = 0.185;
 
         self.world
             .characters
