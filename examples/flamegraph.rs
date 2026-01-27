@@ -285,7 +285,7 @@ fn label(mov: &Move) -> String {
 // endregion
 
 mod colors {
-    use std::{assert_matches::assert_matches, cmp::min};
+    use std::{assert_matches, cmp::min};
 
     #[derive(Copy, Clone, Debug, PartialEq)]
     pub struct Oklab {

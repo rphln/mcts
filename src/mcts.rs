@@ -218,12 +218,12 @@ impl Mcts {
             return head;
         }
 
-        let mut best_index = SENTINEL;
-        let mut best_value = f64::NEG_INFINITY;
-
         if rng.random_bool(self.exploration_rate) {
             return rng.random_range(head..last);
         }
+
+        let mut best_index = SENTINEL;
+        let mut best_value = f64::NEG_INFINITY;
 
         for index in head..last {
             let entry = &self.tree[index];
