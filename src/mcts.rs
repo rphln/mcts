@@ -92,12 +92,6 @@ impl Node {
     pub const fn is_leaf(&self) -> bool {
         self.head == SENTINEL
     }
-
-    /// Adds a new sample to the running statistics.
-    pub fn update(&mut self, value: f64) {
-        self.value += (value - self.value) / f64::from(self.visits + 1);
-        self.visits += 1;
-    }
 }
 
 impl Mcts {
@@ -263,7 +257,9 @@ impl Mcts {
         let value = -value;
 
         let entry = &mut self.tree[node];
-        entry.update(value);
+
+        entry.value += (value - entry.value) / f64::from(entry.visits + 1);
+        entry.visits += 1;
 
         let parent = entry.parent;
         self.backward(parent, value);
