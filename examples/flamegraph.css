@@ -1,102 +1,47 @@
-/*! Section: Boxes */
-
-html {
-  box-sizing: border-box;
-}
-
 *,
 ::before,
 ::after {
-  transition: none 150ms ease-in-out;
-  box-sizing: inherit;
+  box-sizing: border-box;
 }
-
-/*! Section: Layout */
 
 html,
 body {
   margin: 0;
   padding: 0;
-  width: 100%;
-  height: 100%;
 }
 
 body {
   padding: 24px;
-}
-
-details {
-  margin-bottom: 16px;
-}
-
-.node {
-  display: flex;
-  flex-direction: column;
-
-  width: var(--width);
-  visibility: visible;
-
-  transition-property: visibility, width;
-
-  &.focused {
-    width: 100%;
-  }
-
-  &.collapsed {
-    width: 0;
-    visibility: hidden;
-  }
-
-  .children {
-    display: flex;
-    flex-direction: row;
-  }
-}
-
-/*! Section: Style */
-
-body {
   font-family:
     Inter, Roboto, "Helvetica Neue", "Arial Nova", "Nimbus Sans", Arial, sans-serif;
-  font-weight: normal;
-
   font-size: 12px;
   line-height: 16px;
-
   color: #2e3440;
   background: #fff;
 }
 
-samp {
-  font-family:
-    ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
-    "DejaVu Sans Mono", monospace;
-  font-weight: normal;
+#flamegraph-container canvas {
+  display: block;
+}
+#flamegraph-container.hovered canvas {
+  cursor: pointer;
 }
 
-.bar {
-  all: unset;
-
-  display: flex;
-  align-items: center;
-
-  margin: 1px;
-  overflow: hidden;
-
-  cursor: pointer;
-  background-color: var(--color);
-
-  transition-property: opacity;
-
-  .focused:has(.focused) > & {
-    opacity: 60%;
-  }
-
-  .label {
-    padding: 4px;
-
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
+#fg-tooltip {
+  position: fixed;
+  display: none;
+  max-width: 320px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-line;
+  background: #2e3440;
+  color: #eceff4;
+  pointer-events: none;
+  z-index: 9999;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+#fg-tooltip.visible {
+  display: block;
 }
