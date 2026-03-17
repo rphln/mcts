@@ -1,6 +1,11 @@
 use std::{
-    cmp::Reverse, fs::File, io::Write, num::ParseIntError, path::PathBuf,
-    process::Command, time::Duration,
+    cmp::Reverse,
+    fs::File,
+    io::Write,
+    num::ParseIntError,
+    path::PathBuf,
+    process::Command,
+    time::{Duration, Instant},
 };
 
 use clap::Parser;
@@ -34,6 +39,7 @@ pub struct Args {
 
 pub fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    let start_time = Instant::now();
 
     let game = Game::new(args.seed, false)?;
 
@@ -42,9 +48,13 @@ pub fn main() -> anyhow::Result<()> {
 
     let _next = mcts.search(0, &game, &mut rng, args.time, args.iters, args.nodes);
 
+    let elapsed = start_time.elapsed();
+    eprintln!("Done in {elapsed:?}");
+
     let pruning_threshold = {
         let mut visits: Vec<u32> = mcts.tree.iter().map(|node| node.visits).collect();
         visits.sort_unstable();
+
         let top_k = visits.len().saturating_sub(1_000_000);
         visits[top_k]
     };
@@ -131,7 +141,7 @@ fn tree_to_html(
         r#"    <meta name="viewport" content="width=device-width,initial-scale=1" />"#
     )?;
     writeln!(w, "    <title>Flamegraph</title>")?;
-    writeln!(w, r#"    <style>{}</style>"#, include_str!("flamegraph.css"))?;
+    writeln!(w, r"    <style>{}</style>", include_str!("flamegraph.css"))?;
     writeln!(
         w,
         r#"    <script type="module">{}</script>"#,
