@@ -1,5 +1,3 @@
-#![feature(assert_matches)]
-
 pub mod game;
 pub(crate) mod interner;
 pub mod mcts;
