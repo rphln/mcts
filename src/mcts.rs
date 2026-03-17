@@ -1,4 +1,7 @@
-use std::{iter::successors, time::Duration};
+use std::{
+    iter::successors,
+    time::{Duration, Instant},
+};
 
 use rand::prelude::*;
 
@@ -312,14 +315,14 @@ impl Mcts {
         let mut iters = 0;
         let mut nodes = 0;
 
-        let start_time = thread_time();
+        let start_time = Instant::now();
         let root_depth = game.depth;
 
         self.search_while(node, game, rng, |_mcts, _node, game| {
             iters += 1;
             nodes += game.depth - root_depth;
 
-            max_time.is_none_or(|t| thread_time() < start_time + t)
+            max_time.is_none_or(|t| start_time.elapsed() < t)
                 && max_iters.is_none_or(|n| iters < n)
                 && max_nodes.is_none_or(|n| nodes < n)
         })
@@ -376,24 +379,4 @@ impl Mcts {
 
         self.tree.truncate(dst);
     }
-}
-
-/// Returns the CPU time used by the current thread.
-///
-/// # Panics
-///
-/// This uses the `clock_gettime` system call with the `CLOCK_THREAD_CPUTIME_ID`
-/// clock. Panics if the system call to get the CPU time fails.
-#[must_use]
-fn thread_time() -> Duration {
-    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-
-    let err =
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &raw mut time) };
-    assert_ne!(err, -1, "Failed to get CPU time");
-
-    let secs = u64::try_from(time.tv_sec).unwrap();
-    let nanos = u32::try_from(time.tv_nsec).unwrap();
-
-    Duration::new(secs, nanos)
 }
