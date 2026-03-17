@@ -27,8 +27,8 @@ serde_json.workspace = true
 libc = "0.2"
 
 [dev-dependencies]
-criterion = { version = "0.7.0", features = ["html_reports", "real_blackbox"] }
-criterion-macro = "0.4.0"
+criterion = { version = "0.8.2", features = ["html_reports"] }
 
 [[bench]]
 name = "bench"
+harness = false
