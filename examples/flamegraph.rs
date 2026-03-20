@@ -100,7 +100,7 @@ fn build_node_json(
     child_indices.sort_by_key(|&i| Reverse(mcts.tree[i].visits));
 
     let win_rate = sigmoid(node.value);
-    let label = move_label(mcts.moves.lookup(node.mov));
+    let label = move_label(mcts.moves.resolve(node.mov).unwrap());
 
     let parent_visit_share = if node.is_root() {
         100.0

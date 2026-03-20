@@ -105,7 +105,7 @@ impl Mcts {
     #[must_use]
     pub fn new(root_move: Move) -> Self {
         let mut moves = Interner::default();
-        let handle = moves.intern(root_move);
+        let handle = moves.get_or_intern(root_move);
 
         Self {
             tree: vec![Node::new(SENTINEL, handle)],
@@ -157,7 +157,7 @@ impl Mcts {
 
         let next = self.select_node(node, rng);
 
-        let &mov = self.moves.lookup(self.tree[next].mov);
+        let &mov = self.moves.resolve(self.tree[next].mov).unwrap();
         game.play(mov);
 
         self.select_and_expand(next, game, rng)
@@ -182,7 +182,7 @@ impl Mcts {
         let head = self.tree.len();
 
         for mov in game.moves() {
-            let handle = self.moves.intern(mov);
+            let handle = self.moves.get_or_intern(mov);
             self.tree.push(Node::new(node, handle));
         }
 

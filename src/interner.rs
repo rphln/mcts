@@ -1,46 +1,71 @@
-use std::hash::Hash;
+use std::{hash::Hash, rc::Rc};
 
-use indexmap::IndexSet;
-use rustc_hash::FxBuildHasher;
+use rustc_hash::FxHashMap;
 
-/// Quick-and-dirty interner backed by `IndexSet`.
-#[derive(Clone, Debug)]
-pub struct Interner<T>(IndexSet<T, FxBuildHasher>);
-
-/// Opaque handle identifying an interned value.
+/// A stable identifier for an interned value.
 ///
-/// Values of this type are cheap to copy and compare. They are only meaningful
-/// in the context of the `Interner` instance that produced them.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Interned(u16);
+/// Handles are assigned in insertion order and can later be used to resolve the
+/// corresponding value.
+pub type Interned = u16;
 
-impl<T: Hash + Eq> Interner<T> {
-    /// Interns `value`, returning its handle.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the interner exceeds its maximum capacity (currently 2^16).
-    #[inline]
-    #[track_caller]
-    pub fn intern(&mut self, value: T) -> Interned {
-        let (index, _exists) = self.0.insert_full(value);
-        Interned(index.try_into().unwrap())
+/// Stores unique values and assigns each one a stable handle.
+///
+/// The same value always maps to the same handle. Interned values are retained
+/// for the lifetime of the interner, and lookups by handle preserve insertion
+/// order.
+#[derive(Clone, Debug)]
+pub struct Interner<T> {
+    values: Vec<Rc<T>>,
+    index: FxHashMap<Rc<T>, Interned>,
+}
+
+impl<T> Interner<T> {
+    /// Creates a new, empty interner.
+    pub fn new() -> Self {
+        Self { values: Vec::default(), index: FxHashMap::default() }
     }
 
-    /// Returns the value corresponding to `handle`.
+    /// Returns the handle for `value`, inserting it if it is not already
+    /// present.
+    ///
+    /// If `value` has been interned before, its existing handle is returned.
+    /// Otherwise, `value` is stored and assigned the next available handle.
     ///
     /// # Panics
     ///
-    /// Panics if `handle` is out-of-bounds.
+    /// Panics if the number of interned values exceeds `u16::MAX`.
+    pub fn get_or_intern(&mut self, value: T) -> Interned
+    where
+        T: Hash + Eq,
+    {
+        if let Some(&handle) = self.index.get(&value) {
+            return handle;
+        }
+
+        let value = Rc::new(value);
+        let handle = self.values.len().try_into().expect("interner capacity exceeded");
+
+        self.values.push(value.clone());
+        self.index.insert(value, handle);
+
+        handle
+    }
+
+    /// Returns the interned value associated with `handle`, if it exists.
     #[inline]
-    #[track_caller]
-    pub fn lookup(&self, handle: Interned) -> &T {
-        &self.0[handle.0 as usize]
+    pub fn resolve(&self, handle: Interned) -> Option<&T> {
+        self.values.get(handle as usize).map(Rc::as_ref)
+    }
+
+    /// Returns an iterator over all interned values in insertion order.
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.values.iter().map(Rc::as_ref)
     }
 }
 
 impl<T> Default for Interner<T> {
     fn default() -> Self {
-        Self(IndexSet::with_hasher(FxBuildHasher))
+        Self::new()
     }
 }
