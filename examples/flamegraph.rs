@@ -1,27 +1,24 @@
 use std::{
-    cmp::Reverse,
     fs::File,
-    io::Write,
+    io::{self, BufWriter, Write},
     num::ParseIntError,
     path::PathBuf,
-    process::Command,
     time::{Duration, Instant},
 };
 
 use clap::Parser;
 use rand::prelude::*;
-use serde::Serialize;
 use swift_swallow_tree_search::{
     DefaultRng,
     game::{Color, Game, Move},
-    mcts::Mcts,
+    mcts::{Mcts, Node},
 };
 
 /// Plots a flamegraph of the MCTS search tree after searching from the root.
 #[derive(Debug, Parser)]
 pub struct Args {
-    /// Path to the output HTML file.
-    #[clap(default_value = "/tmp/flamegraph.html")]
+    /// Path to the output file.
+    #[clap(default_value = "/tmp/flamegraph.bin")]
     pub destination: PathBuf,
     /// Seed for the game and search.
     #[clap(long, default_value_t = 0)]
@@ -47,118 +44,96 @@ pub fn main() -> anyhow::Result<()> {
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
 
     let _next = mcts.search(0, &game, &mut rng, args.time, args.iters, args.nodes);
+    eprintln!(
+        "Expanded {n} nodes in {elapsed:.2?}",
+        n = mcts.tree.len(),
+        elapsed = start_time.elapsed()
+    );
 
-    let elapsed = start_time.elapsed();
-    eprintln!("Done in {elapsed:?}");
+    let names: Vec<String> = mcts.moves.iter().map(move_label).collect();
 
-    let pruning_threshold = {
-        let mut visits: Vec<u32> = mcts.tree.iter().map(|node| node.visits).collect();
-        visits.sort_unstable();
+    let writer = BufWriter::new(File::create(args.destination)?);
 
-        let top_k = visits.len().saturating_sub(1_000_000);
-        visits[top_k]
-    };
+    let start_time = Instant::now();
+    let num_bytes = serialize(&mcts.tree, &names, writer)?;
 
-    let mut file = File::create(&args.destination)?;
-    tree_to_html(&mcts, pruning_threshold, &mut file)?;
-
-    let _ = Command::new("open").arg(&args.destination).spawn()?;
+    eprintln!(
+        "Written {num_bytes} bytes in {elapsed:.2?}",
+        elapsed = start_time.elapsed()
+    );
 
     Ok(())
+}
+
+/// ┌─ nodes ────────────────────────────────── `at_nodes` ─┐
+/// │  Node × count                                         │
+/// │    u16  mov                                           │
+/// │    u32  visits                                        │
+/// │    f64  value                                         │
+/// │    u64  parent                                        │
+/// │    u64  head                                          │
+/// │    u64  last                                          │
+/// ├─ name data ─────────────────────── `at_name_data` ────┤
+/// │  u8[]                                                 │
+/// ├─ name index ────────────────────── `at_name_index` ───┤
+/// │  Entry × count                                        │
+/// │    u64  ptr                                           │
+/// │    u64  len                                           │
+/// ├─ footer ──────────────────────────────────────────────┤
+/// │  u64  ptr    (`at_nodes`)                             │
+/// │  u64  count                                           │
+/// │  u64  ptr    (`at_name_index`)                        │
+/// │  u64  count                                           │
+/// └───────────────────────────────────────────────────────┘
+fn serialize(
+    tree: &[Node],
+    names: &[String],
+    mut out: impl Write,
+) -> io::Result<usize> {
+    /// Writes a fixed-size byte array; the const `N` is a compile-time
+    /// assertion that the field's wire size matches the format spec.
+    fn field<const N: usize>(mut out: impl Write, bytes: [u8; N]) -> io::Result<usize> {
+        out.write_all(&bytes)?;
+        Ok(N)
+    }
+
+    let mut pos = 0;
+
+    let at_nodes = pos;
+    for node in tree {
+        pos += field::<2>(&mut out, node.mov.to_le_bytes())?;
+        pos += field::<4>(&mut out, node.visits.to_le_bytes())?;
+        pos += field::<8>(&mut out, node.value.to_le_bytes())?;
+        pos += field::<8>(&mut out, node.parent.to_le_bytes())?;
+        pos += field::<8>(&mut out, node.head.to_le_bytes())?;
+        pos += field::<8>(&mut out, node.last.to_le_bytes())?;
+    }
+
+    let at_name_data = pos;
+    for name in names {
+        out.write_all(name.as_bytes())?;
+        pos += name.len();
+    }
+
+    let at_name_index = pos;
+    let mut name_ptr = at_name_data;
+    for name in names {
+        pos += field::<8>(&mut out, name_ptr.to_le_bytes())?;
+        pos += field::<8>(&mut out, name.len().to_le_bytes())?;
+        name_ptr += name.len();
+    }
+
+    pos += field::<8>(&mut out, at_nodes.to_le_bytes())?;
+    pos += field::<8>(&mut out, tree.len().to_le_bytes())?;
+
+    pos += field::<8>(&mut out, at_name_index.to_le_bytes())?;
+    pos += field::<8>(&mut out, names.len().to_le_bytes())?;
+
+    Ok(pos)
 }
 
 fn parse_millis(arg: &str) -> Result<Duration, ParseIntError> {
     Ok(Duration::from_millis(arg.parse()?))
-}
-
-fn sigmoid(x: f64) -> f64 {
-    1.0 / (1.0 + f64::exp(-x))
-}
-
-#[derive(Serialize)]
-struct NodeJson {
-    label: String,
-    title: String,
-    visits: u32,
-    win_rate: f64,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    children: Vec<NodeJson>,
-}
-
-fn build_node_json(
-    node_idx: usize,
-    mcts: &Mcts,
-    pruning_threshold: u32,
-    is_pv: bool,
-) -> Option<NodeJson> {
-    let node = &mcts.tree[node_idx];
-    if !is_pv && node.visits <= pruning_threshold {
-        return None;
-    }
-
-    let mut child_indices: Vec<usize> = (node.head..node.last).collect();
-    child_indices.sort_by_key(|&i| Reverse(mcts.tree[i].visits));
-
-    let win_rate = sigmoid(node.value);
-    let label = move_label(mcts.moves.resolve(node.mov).unwrap());
-
-    let parent_visit_share = if node.is_root() {
-        100.0
-    } else {
-        100.0 * f64::from(node.visits) / f64::from(mcts.tree[node.parent].visits)
-    };
-
-    let title = format!(
-        "{label}\n\nVisits: {visits}\nShare of parent\u{2019}s visits: {share:.3}%\nMean value (Q): {q:.3}\nPredicted win rate: {wr:.2}%",
-        visits = node.visits,
-        share = parent_visit_share,
-        q = node.value,
-        wr = 100.0 * win_rate,
-    );
-
-    let children = child_indices
-        .into_iter()
-        .enumerate()
-        .filter_map(|(i, child_idx)| {
-            build_node_json(child_idx, mcts, pruning_threshold, is_pv && i == 0)
-        })
-        .collect();
-
-    Some(NodeJson { label, title, visits: node.visits, win_rate, children })
-}
-
-fn tree_to_html(
-    mcts: &Mcts,
-    pruning_threshold: u32,
-    w: &mut impl Write,
-) -> anyhow::Result<()> {
-    writeln!(w, "<!doctype html>")?;
-    writeln!(w, r#"<html lang="en">"#)?;
-    writeln!(w, "  <head>")?;
-    writeln!(w, r#"    <meta charset="utf-8" />"#)?;
-    writeln!(
-        w,
-        r#"    <meta name="viewport" content="width=device-width,initial-scale=1" />"#
-    )?;
-    writeln!(w, "    <title>Flamegraph</title>")?;
-    writeln!(w, r"    <style>{}</style>", include_str!("flamegraph.css"))?;
-    writeln!(
-        w,
-        r#"    <script type="module">{}</script>"#,
-        include_str!("flamegraph.js")
-    )?;
-    writeln!(w, "  </head>")?;
-    writeln!(w, "  <body>")?;
-    writeln!(w, r#"    <div id="flamegraph-container"></div>"#)?;
-    write!(w, r#"    <script id="flamegraph-data" type="application/json">"#)?;
-    serde_json::to_writer(
-        &mut *w,
-        &build_node_json(0, mcts, pruning_threshold, true).unwrap(),
-    )?;
-    writeln!(w, "</script>")?;
-    writeln!(w, "  </body>")?;
-    writeln!(w, "</html>")?;
-    Ok(())
 }
 
 const CHARACTERS: [&str; 8] = [
