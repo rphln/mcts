@@ -17,7 +17,7 @@ fn search(nodes: usize) -> Option<Node> {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("search 1M nodes", |b| b.iter(|| search(black_box(1_000_000))));
+    c.bench_function("search 250k nodes", |b| b.iter(|| search(black_box(250_000))));
 }
 
 criterion_group!(benches, criterion_benchmark);
