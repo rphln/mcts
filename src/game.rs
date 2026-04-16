@@ -1,4 +1,4 @@
-use std::iter::once;
+use std::{cmp::max, iter::once};
 
 use either::Either;
 use swift_swallow::{
@@ -74,17 +74,18 @@ impl Game {
     /// Heuristic score from `color`'s perspective.
     #[must_use]
     pub fn evaluate(&self, color: Color) -> f64 {
-        const BASE_WEIGHT: f64 = 0.614;
-        const HEALTH_WEIGHT: f64 = 0.185;
+        const W0: f64 = 0.614;
+        const W1: f64 = 0.185;
 
         self.world
             .characters
             .iter()
             .filter(|character| !character.is_defeated())
             .map(|character| {
-                let health = f64::from(character.current_health());
-                let score = BASE_WEIGHT + HEALTH_WEIGHT * f64::sqrt(health);
+                let health =
+                    max(0, character.current_health() - character.counters.poison);
 
+                let score = W0 + W1 * f64::sqrt(f64::from(health));
                 if character.team == color { score } else { -score }
             })
             .sum()
