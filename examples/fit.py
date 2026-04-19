@@ -1,70 +1,101 @@
-import json
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
+import polars as pl
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report
-from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, log_loss
+from sklearn.model_selection import StratifiedGroupKFold
+
+FEATURE_COLS = [
+    "health:false",
+    "health:true",
+    "is_alive:false",
+    "is_alive:true",
+]
 
 
-def _sample_to_features(sample: dict) -> dict:
-    w = np.array(sample["white_health"])
-    b = np.array(sample["black_health"])
+def load_and_prepare(paths: list[Path], cache: Path = Path("dist/data.parquet")):
+    try:
+        df = pl.read_parquet(cache)
+    except FileNotFoundError:
+        df = pl.concat(
+            pl.read_json(path, schema_overrides={"seed": pl.UInt64}) for path in paths
+        )
 
-    return {
-        "_0": np.count_nonzero(w > 0) - np.count_nonzero(b > 0),
-        "_1": np.sum(np.sqrt(w)) - np.sum(np.sqrt(b)),
-    }
+        df.write_parquet(cache)
+
+    df = df.lazy()
+
+    labels = (
+        df.group_by("seed", "turn", "team")
+        .agg(pl.max("is_alive"))
+        .group_by("seed", "team")
+        .agg(pl.min("is_alive").alias("survives"))
+    )
+
+    q = (
+        df.join(labels, on=("seed", "team"))
+        .with_columns(
+            health=pl.col("current_health").sqrt(),
+            is_active=pl.col("team") == pl.col("active_team"),
+        )
+        .pivot(
+            on="is_active",
+            on_columns=("true", "false"),
+            index=("seed", "turn"),
+            values=("is_alive", "health", "poison", "survives"),
+            aggregate_function="sum",
+            separator=":",
+        )
+    )
+
+    print(q.explain())
+
+    return q.collect(engine="streaming")
 
 
-def load_turn_samples(paths: list[Path], max_seq_len: int = 64):
-    rows = []
+def make_data(path: Path):
+    files = sorted(Path(path).rglob("*.json"))
 
-    for path in paths:
-        with path.open() as file:
-            data = json.load(file)
+    df = load_and_prepare(files)
+    print(df.describe())
 
-        match data["outcome"]:
-            case "Draw":
-                continue
-            case "WhiteWins":
-                y = True
-            case "BlackWins":
-                y = False
-            case _:
-                raise ValueError()
+    X = df[FEATURE_COLS]
+    y = df["survives:true"] > 0
 
-        for sample in data["samples"][-max_seq_len:]:
-            row = _sample_to_features(sample)
-            rows.append({"y": y, **row})
+    groups = df["seed"]
 
-    df = pd.DataFrame(rows)
-
-    x = df.drop(columns=["y"])
-    y = df["y"]
-
-    return x, y
+    train_idx, test_idx = next(StratifiedGroupKFold(n_splits=5).split(X, y, groups))
+    return X[train_idx], X[test_idx], y[train_idx], y[test_idx]
 
 
+@pl.Config(float_precision=3, tbl_cols=-1)
 def main():
-    np.set_printoptions(precision=3)
+    np.set_printoptions(formatter={"float": "{: 0.3f}".format})
 
-    files = sorted(Path("dist").rglob("*.json"))
-    train_files, test_files = train_test_split(files, test_size=0.1, random_state=0)
+    X_train, X_test, y_train, y_test = make_data(Path("dist/data"))
 
-    x_train, y_train = load_turn_samples(train_files)
-    x_test, y_test = load_turn_samples(test_files)
+    estimator = LogisticRegression(fit_intercept=True, solver="newton-cholesky")
+    estimator.fit(X_train, y_train)
 
-    clf = LogisticRegression(random_state=0, fit_intercept=False)
-    clf.fit(x_train, y_train)
-
-    print("Coefficients:", clf.coef_)
-    print("Intercept:", clf.intercept_)
+    y_pred = estimator.predict(X_test)
+    print(classification_report(y_test, y_pred))
     print()
 
-    y_pred = clf.predict(x_test)
-    print(classification_report(y_test, y_pred))
+    y_pred = estimator.predict_proba(X_test)
+    print("Mean NLL:", log_loss(y_test, y_pred))
+    print()
+
+    print(f"{estimator.intercept_=} {estimator.coef_=}")
+    print()
+
+    white = estimator.coef_[0, 1::2]
+    black = estimator.coef_[0, 0::2]
+
+    weights = (white - black) / 2.0
+    weights = weights.reshape(1, -1, order="F")
+
+    print(f"{weights=}")
 
 
 if __name__ == "__main__":

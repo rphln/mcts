@@ -1,138 +1,161 @@
 #![feature(file_buffered)]
 
 use std::{
+    cmp::max,
     fs::{File, create_dir_all},
+    panic::catch_unwind,
     path::PathBuf,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::Parser;
-use rand::{RngCore, SeedableRng, prelude::*};
-use serde_json::json;
-use swift_swallow_rpc::Outcome;
+use rand::{RngCore, SeedableRng};
+use swift_swallow::{TeamKey, character::CharacterKey};
 use swift_swallow_tree_search::{
     DefaultRng,
     game::{Color, Game, Move},
     mcts::{Mcts, Node},
 };
 
-#[derive(Debug, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct Args {
-    #[clap(default_value = "dist/")]
+    #[arg(default_value = "dist/")]
     pub destination: PathBuf,
-    #[clap(long, default_value_t = 65_536)]
+    #[arg(long, default_value_t = 65_536)]
     pub iters: u32,
+    #[arg(long, default_value_t = rand::rng().next_u64())]
+    pub seed: u64,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
     create_dir_all(&args.destination)?;
 
-    let mut thread_rng = rand::rng();
+    let mut rng = DefaultRng::seed_from_u64(args.seed);
 
     loop {
-        let seed = thread_rng.next_u64();
-        let mut game = Game::new(seed, true)?;
+        let now = Instant::now();
+        let seed = rng.next_u64();
 
-        let mut search_rng = DefaultRng::seed_from_u64(seed);
-        let mut samples = vec![];
-
-        let start_time = Instant::now();
-
-        while !game.is_over() {
-            let mov = search(&mut game, &mut search_rng, None, Some(args.iters), None);
-            game.play(mov);
-
-            let mut white_health = vec![];
-            let mut black_health = vec![];
-
-            let mut white_ready_at = vec![];
-            let mut black_ready_at = vec![];
-
-            let active_team = game.world.active_team();
-
-            for character in &game.world.characters {
-                match character.team {
-                    Color::White => {
-                        white_health.push(character.current_health());
-                        white_ready_at.push(character.ready_at);
-                    }
-                    Color::Black => {
-                        black_health.push(character.current_health());
-                        black_ready_at.push(character.ready_at);
-                    }
-                }
-            }
-
-            let sample = json!({
-                "tick": game.world.tick,
-                "team": active_team,
-                "white_health": white_health,
-                "black_health": black_health,
-                "white_ready_at": white_ready_at,
-                "black_ready_at": black_ready_at,
-            });
-            samples.push(sample);
-        }
-
-        assert!(game.is_over());
-
-        let elapsed = start_time.elapsed();
-        let outcome = match game.world.active_team() {
-            Color::White => Outcome::WhiteWins,
-            Color::Black => Outcome::BlackWins,
+        let Ok(()) = catch_unwind(|| run_game(seed, &args)) else {
+            bail!("seed={seed:016x} panicked");
         };
 
-        let value = json!({
-            "outcome": outcome,
-            "samples": samples,
-            "meta": {
-                "seed": seed,
-                "turns": samples.len(),
-                "elapsed": elapsed.as_millis(),
-                "search_iters": args.iters,
-            }
-        });
-
-        let name = format!("{seed:016x}.json");
-        let path = args.destination.join(name);
-
-        let mut writer = File::create_buffered(&path)?;
-        serde_json::to_writer_pretty(&mut writer, &value)?;
+        let elapsed = now.elapsed();
+        println!("seed={seed:016x} elapsed={elapsed:?}");
     }
 }
 
-/// Performs a search from the current game state and returns the selected move.
-///
-/// # Panics
-///
-/// Panics if no legal moves are available in the current game state.
-#[must_use]
-pub fn search(
-    game: &mut Game,
-    rng: &mut impl Rng,
-    time: Option<Duration>,
-    iters: Option<u32>,
-    nodes: Option<usize>,
-) -> Move {
-    let mut moves = game.moves();
-    let first = moves.next().expect("`moves` should be non-empty");
+fn run_game(seed: u64, args: &Args) {
+    let mut game = Game::new(seed, true).unwrap();
 
-    // For now, just skip the search for singular moves. Later on, we could ponder
-    // here.
-    if moves.next().is_none() {
-        return first;
-    }
-
-    drop(moves);
-
+    let mut search_rng = DefaultRng::seed_from_u64(seed);
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
 
-    let &Node { mov, .. } = mcts
-        .search(0, game, rng, time, iters, nodes)
-        .expect("`node` should have children");
-    let (&mov, _history) = mcts.moves.get_index(mov).unwrap();
+    let mut records = Vec::new();
 
-    mov
+    for turn in 0..1024 {
+        if game.is_over() {
+            break;
+        }
+
+        let _ = mcts
+            .search(0, &game, &mut search_rng, None, Some(args.iters), None)
+            .expect("`node` should have children");
+
+        let Node { head, last, .. } = mcts.nodes[0];
+        let root = (head..last)
+            .max_by_key(|&node| mcts.nodes[node].visits)
+            .expect("root should have children");
+
+        let (&mov, _history) = mcts.moves.get_index(mcts.nodes[root].mov).unwrap();
+        game.play(mov);
+
+        mcts.reroot(root);
+
+        let active_team = game.world.active_team();
+        let active_character = game.world.active_character;
+
+        for character in &game.world.characters {
+            let record = Record {
+                seed,
+
+                turn,
+                tick: game.world.tick,
+
+                character: character.key,
+                team: character.team,
+
+                active_character,
+                active_team,
+
+                ready_at: character.ready_at,
+                cooldown: character.cooldown,
+
+                can_act: character.can_act,
+                can_move: character.can_move,
+
+                maximum_health: character.health,
+                current_health: character.current_health(),
+
+                is_alive: !character.is_defeated(),
+
+                block: character.block,
+                poison: character.counters.poison,
+
+                strength: character.counters.strength,
+                dexterity: character.counters.dexterity,
+
+                weakness: max(character.timers.weak - game.world.tick, 0),
+                vulnerable: max(character.timers.vulnerable - game.world.tick, 0),
+            };
+
+            records.push(record);
+        }
+    }
+
+    if !game.is_over() {
+        eprintln!("Seed {seed:016x} exceeded the turn limit; aborting.");
+        return;
+    }
+
+    let destination = args.destination.join(format!("{seed:016x}.json"));
+    let writer = File::create_buffered(&destination).unwrap();
+
+    serde_json::to_writer(writer, &records).unwrap();
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct Record {
+    pub seed: u64,
+
+    pub turn: u32,
+    pub tick: i32,
+
+    pub character: CharacterKey,
+    pub team: TeamKey,
+
+    pub active_character: CharacterKey,
+    pub active_team: TeamKey,
+
+    pub ready_at: i32,
+    pub cooldown: i32,
+
+    pub can_act: bool,
+    pub can_move: bool,
+
+    pub maximum_health: i32,
+    pub current_health: i32,
+
+    pub is_alive: bool,
+
+    pub poison: i32,
+    pub block: i32,
+
+    pub strength: i32,
+    pub dexterity: i32,
+
+    pub weakness: i32,
+    pub vulnerable: i32,
 }
