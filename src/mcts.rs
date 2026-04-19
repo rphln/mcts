@@ -93,7 +93,7 @@ impl Node {
     /// Returns whether this node is a leaf.
     #[must_use]
     pub const fn is_leaf(&self) -> bool {
-        self.head == SENTINEL
+        self.head == self.last
     }
 }
 
@@ -113,6 +113,18 @@ impl Mcts {
             visits_to_expand: 1,
             exploration_rate: 0.2,
         }
+    }
+
+    /// Returns the number of nodes in the tree.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.tree.len()
+    }
+
+    /// Returns `true` if the tree only has the root.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 1
     }
 
     /// Returns an iterator over the sequence of best moves found so far.
@@ -328,30 +340,87 @@ impl Mcts {
         })
     }
 
-    /// Removes parent nodes that satisfy `predicate`.
-    pub fn gc(&mut self, pred: impl Fn(&Node) -> bool) {
-        let len = self.tree.len();
+    /// Severs the descendants of each node for which `should_prune` returns
+    /// `true`, leaving the node itself as a leaf.
+    ///
+    /// Descendants of an already-severed node are discarded without being
+    /// visited.
+    ///
+    /// This method invalidates all existing indices into the tree.
+    pub fn prune(&mut self, should_prune: impl FnMut(&Node) -> bool) {
+        self.compact(0, should_prune);
+    }
 
+    /// Discards everything outside the subtree rooted at `node`, making `node`
+    /// the new root of the tree, accessible at index `0` after the call.
+    ///
+    /// This method invalidates all existing indices into the tree.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is out of bounds.
+    pub fn reroot(&mut self, node: usize) {
+        self.compact(node, |_node| false);
+    }
+
+    /// Combined mark-and-sweep and re-rooting primitive that retains the
+    /// subtree rooted at `root` and pruning it according to `should_prune`.
+    ///
+    /// Severs the descendants of each node for which `should_prune` returns
+    /// `true`, leaving the node itself as a leaf. Descendants of an already-
+    /// severed node are discarded without being visited.
+    ///
+    /// The node at `root` is never removed; severing it collapses the subtree
+    /// to a single node.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `root` is out of bounds.
+    fn compact(&mut self, root: usize, mut should_prune: impl FnMut(&Node) -> bool) {
+        let len = self.tree.len();
+        assert!(root < len, "root out of bounds");
+
+        // region: Mark phase.
+
+        // Relocation map: `map[src] = dst`, or `SENTINEL` if reclaimed.
         let mut map = vec![SENTINEL; len];
         let mut dst = 0;
 
-        // Invariant: always keep the root. Removing it would break the tree.
-        map[0] = 0;
+        // The root is always retained; pruning it merely severs its children.
+        map[root] = 0;
         dst += 1;
 
-        for src in 1..len {
-            let node = &self.tree[src];
-            let parent = &self.tree[node.parent];
+        if should_prune(&self.tree[root]) {
+            self.tree[root].head = SENTINEL;
+            self.tree[root].last = SENTINEL;
+        }
 
-            if map[node.parent] == SENTINEL || pred(parent) {
+        // Combined mark and relocation table pass. Walking parents before
+        // children lets each node observe its parent's already-decided fate.
+        for src in (root + 1)..len {
+            let parent = self.tree[src].parent;
+            assert!(parent < src, "tree must be topologically ordered");
+
+            // Recursively skip the descendants of anything already reclaimed or
+            // severed.
+            if map[parent] == SENTINEL || self.tree[parent].head == SENTINEL {
                 continue;
             }
 
             map[src] = dst;
             dst += 1;
+
+            if should_prune(&self.tree[src]) {
+                self.tree[src].head = SENTINEL;
+                self.tree[src].last = SENTINEL;
+            }
         }
 
-        for src in 0..len {
+        // endregion
+        // region: Sweep phase.
+
+        // Compact survivors and rewrite their pointers.
+        for src in root..len {
             let dst = map[src];
             if dst == SENTINEL {
                 continue;
@@ -367,15 +436,15 @@ impl Mcts {
             }
 
             if !node.is_leaf() {
-                if map[node.head] == SENTINEL {
-                    node.last = SENTINEL;
-                    node.head = SENTINEL;
-                } else {
-                    node.last = map[node.head] + (node.last - node.head);
-                    node.head = map[node.head];
-                }
+                let head = map[node.head];
+                let last = map[node.head] + (node.last - node.head);
+
+                node.head = head;
+                node.last = last;
             }
         }
+
+        // endregion
 
         self.tree.truncate(dst);
     }
