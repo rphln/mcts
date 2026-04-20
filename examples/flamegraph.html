@@ -595,7 +595,7 @@ Visits: ${node.visits} (${share.toFixed(1)}%)`;
       // Data
 
       const FOOTER = -32;
-      const STRIDE = 38;
+      const STRIDE = 44;
 
       /**
        * @param {File} file
@@ -716,14 +716,13 @@ Visits: ${node.visits} (${share.toFixed(1)}%)`;
           const pageOffset = offset - pageStart;
           const view = new DataView(page.slice(pageOffset, pageOffset + STRIDE));
 
-          // No padding: u16(2) + u32(4) + f64(8) + u64(8) + u64(8) + u64(8) = 38 bytes.
           return {
-            mov: view.getUint16(0, true),
-            visits: view.getUint32(2, true),
-            value: view.getFloat64(6, true),
-            parent: Number(view.getBigUint64(14, true)),
-            head: Number(view.getBigUint64(22, true)),
-            last: Number(view.getBigUint64(30, true)),
+            mov: view.getBigUint64(0, true),
+            visits: view.getUint32(8, true),
+            value: view.getFloat64(12, true),
+            parent: Number(view.getBigUint64(20, true)),
+            head: Number(view.getBigUint64(28, true)),
+            last: Number(view.getBigUint64(36, true)),
           };
         }
       }

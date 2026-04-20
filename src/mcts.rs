@@ -3,12 +3,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use indexmap::IndexMap;
 use rand::prelude::*;
+use rustc_hash::FxBuildHasher;
 
-use crate::{
-    game::{Game, Move},
-    interner::{Interned, Interner},
-};
+use crate::game::{Game, Move};
 
 /// An implementation of the Monte Carlo Tree Search algorithm with the
 /// following modifications:
@@ -35,8 +34,8 @@ use crate::{
 /// threshold.
 ///
 /// The search is performed iteratively, and the best move found so far can be
-/// queried after each iteration with [`Self::best_child`]. The entire principal
-/// variation is available through [`Self::principal_variation`].
+/// queried after each iteration with [`Mcts::best_child`]. The entire principal
+/// variation is available through [`Mcts::principal_variation`].
 ///
 /// # References
 ///
@@ -47,13 +46,17 @@ use crate::{
 /// 5. <https://repository.falmouth.ac.uk/2782/1/MemoryLimiting.pdf>
 #[derive(Clone, Debug)]
 pub struct Mcts {
+    /// Flattened tree representation.
+    ///
     /// See <https://www.cs.cornell.edu/~asampson/blog/flattening.html>.
-    pub tree: Vec<Node>,
-    /// Interner for moves used in nodes.
-    pub moves: Interner<Move>,
+    pub nodes: Vec<Node>,
+    /// Per-move statistics, shared across the tree, with move interning.
+    pub moves: IndexMap<Move, History, FxBuildHasher>,
+    /// Visit threshold for node expansion.
+    ///
     /// See <https://stackoverflow.com/a/35666246>.
     pub visits_to_expand: u32,
-    /// Exploration rate (ε) for the ε-greedy policy.
+    /// Exploration rate for ε-greedy selection.
     pub exploration_rate: f64,
 }
 
@@ -61,7 +64,7 @@ pub struct Mcts {
 #[derive(Clone, Debug)]
 pub struct Node {
     /// Move used to reach this node.
-    pub mov: Interned,
+    pub mov: usize,
     /// Number of visits.
     pub visits: u32,
     /// Estimated reward.
@@ -74,14 +77,23 @@ pub struct Node {
     pub last: usize,
 }
 
+/// Aggregated statistics for a move.
+#[derive(Clone, Default, Debug)]
+pub struct History {
+    /// Number of visits.
+    pub visits: u32,
+    /// Estimated reward.
+    pub value: f64,
+}
+
 /// Placeholder for an unset node index.
 const SENTINEL: usize = !0;
 
 impl Node {
     /// Creates a new node with default statistics.
     #[must_use]
-    const fn new(parent: usize, mov: Interned) -> Self {
-        Self { mov, visits: 0, value: 0., parent, head: SENTINEL, last: SENTINEL }
+    const fn new(parent: usize, mov: usize) -> Node {
+        Node { mov, visits: 0, value: 0., parent, head: SENTINEL, last: SENTINEL }
     }
 
     /// Returns whether this node is the root node.
@@ -97,18 +109,63 @@ impl Node {
     }
 }
 
+impl History {
+    /// Incorporates a batch of samples with the given mean into the history.
+    pub fn update_batch(&mut self, mean: f64, num_samples: u32) {
+        if num_samples == 0 {
+            return;
+        }
+
+        let n = f64::from(self.visits);
+        let k = f64::from(num_samples);
+
+        self.value += (k / (n + k)) * (mean - self.value);
+        self.visits += num_samples;
+    }
+
+    /// Removes a batch of samples with the given mean from the history.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `num_samples` exceeds `visits`.
+    pub fn remove_batch(&mut self, mean: f64, num_samples: u32) {
+        if num_samples == 0 {
+            return;
+        }
+
+        assert!(num_samples <= self.visits, "cannot remove more samples than present");
+
+        if num_samples == self.visits {
+            self.visits = 0;
+            self.value = 0.;
+
+            return;
+        }
+
+        let n = f64::from(self.visits);
+        let k = f64::from(num_samples);
+
+        self.value -= (k / (n - k)) * (mean - self.value);
+        self.visits -= num_samples;
+    }
+}
+
 impl Mcts {
     /// Creates a new Monte Carlo Tree Search instance.
     ///
     /// The `root_move` is an arbitrary move that represents the root of the
     /// tree.
     #[must_use]
-    pub fn new(root_move: Move) -> Self {
-        let mut moves = Interner::default();
-        let handle = moves.get_or_intern(root_move);
+    pub fn new(root_move: Move) -> Mcts {
+        let mut moves = IndexMap::with_hasher(FxBuildHasher);
 
-        Self {
-            tree: vec![Node::new(SENTINEL, handle)],
+        let entry = moves.entry(root_move);
+        let handle = entry.index();
+
+        let _ = entry.or_default();
+
+        Mcts {
+            nodes: vec![Node::new(SENTINEL, handle)],
             moves,
             visits_to_expand: 1,
             exploration_rate: 0.2,
@@ -118,7 +175,7 @@ impl Mcts {
     /// Returns the number of nodes in the tree.
     #[must_use]
     pub const fn len(&self) -> usize {
-        self.tree.len()
+        self.nodes.len()
     }
 
     /// Returns `true` if the tree only has the root.
@@ -129,8 +186,8 @@ impl Mcts {
 
     /// Returns an iterator over the sequence of best moves found so far.
     pub fn principal_variation(&self) -> impl Iterator<Item = &Node> {
-        successors(self.tree.first(), |parent| {
-            self.tree
+        successors(self.nodes.first(), |parent| {
+            self.nodes
                 .get(parent.head..parent.last)?
                 .iter()
                 .max_by_key(|node| node.visits)
@@ -139,7 +196,7 @@ impl Mcts {
 
     /// Returns an iterator over the ancestors of `node`, starting at `node`.
     pub fn ancestors(&self, node: usize) -> impl Iterator<Item = &Node> {
-        successors(self.tree.get(node), |node| self.tree.get(node.parent))
+        successors(self.nodes.get(node), |node| self.nodes.get(node.parent))
     }
 
     /// Recursively traverses the tree from a given `node` and selects the next
@@ -158,18 +215,18 @@ impl Mcts {
         game: &mut Game,
         rng: &mut impl Rng,
     ) -> usize {
-        let skip_expansion = self.tree[node].visits < self.visits_to_expand;
+        let skip_expansion = self.nodes[node].visits < self.visits_to_expand;
         if skip_expansion || game.is_over() {
             return node;
         }
 
-        if self.tree[node].is_leaf() {
+        if self.nodes[node].is_leaf() {
             self.expand_node(node, game, rng);
         }
 
         let next = self.select_node(node, rng);
 
-        let &mov = self.moves.resolve(self.tree[next].mov).unwrap();
+        let (&mov, _) = self.moves.get_index(self.nodes[next].mov).unwrap();
         game.play(mov);
 
         self.select_and_expand(next, game, rng)
@@ -189,26 +246,34 @@ impl Mcts {
     ///
     /// Panics if `node` is not a leaf or if there are no legal moves available.
     fn expand_node(&mut self, node: usize, game: &Game, rng: &mut impl Rng) {
-        assert!(self.tree[node].is_leaf(), "`node` should be a leaf");
+        assert!(self.nodes[node].is_leaf(), "`node` should be a leaf");
 
-        let head = self.tree.len();
+        let head = self.nodes.len();
 
         for mov in game.moves() {
-            let handle = self.moves.get_or_intern(mov);
-            self.tree.push(Node::new(node, handle));
+            let entry = self.moves.entry(mov);
+            let handle = entry.index();
+
+            let _ = entry.or_default();
+
+            self.nodes.push(Node::new(node, handle));
         }
 
-        let last = self.tree.len();
+        let last = self.nodes.len();
         assert_ne!(head, last, "No legal moves.");
 
-        self.tree[node].head = head;
-        self.tree[node].last = last;
+        self.nodes[node].head = head;
+        self.nodes[node].last = last;
 
-        self.tree[head..last].shuffle(rng);
+        self.nodes[head..last].shuffle(rng);
 
         if last - head == 1 {
-            self.tree[head].visits = self.tree[node].visits;
-            self.tree[head].value = -self.tree[node].value;
+            let [parent, child] = self.nodes.get_disjoint_mut([node, head]).unwrap();
+
+            child.visits = parent.visits;
+            child.value = -parent.value;
+
+            self.moves[child.mov].update_batch(child.value, child.visits);
         }
     }
 
@@ -218,8 +283,8 @@ impl Mcts {
     ///
     /// Panics if `parent` is a leaf.
     fn select_node(&self, parent: usize, rng: &mut impl Rng) -> usize {
-        let head = self.tree[parent].head;
-        let last = self.tree[parent].last;
+        let head = self.nodes[parent].head;
+        let last = self.nodes[parent].last;
 
         assert_ne!(head, last, "`parent` should not be a leaf");
 
@@ -235,12 +300,22 @@ impl Mcts {
         let mut best_value = f64::NEG_INFINITY;
 
         for index in head..last {
-            let entry = &self.tree[index];
-            if entry.visits < 1 {
+            let node = &self.nodes[index];
+            let history = &self.moves[node.mov];
+
+            if history.visits < 1 {
                 return index;
             }
 
-            let value = entry.value;
+            let n = f64::from(node.visits);
+
+            // Found empirically. See Section 8.4.2 in [1] for other schedules.
+            //
+            // [1]: <https://papersdb.cs.ualberta.ca/~papersdb/uploaded_files/1029/paper_thesis.pdf>
+            let beta = f64::sqrt(1. / (1. + n));
+            std::assert_matches!(beta, 0.0..=1.0, "`beta` should be in [0, 1]");
+
+            let value = (1. - beta) * node.value + beta * history.value;
             if value > best_value {
                 best_index = index;
                 best_value = value;
@@ -271,10 +346,14 @@ impl Mcts {
         // See <https://www.chessprogramming.org/Negamax>.
         let value = -value;
 
-        let entry = &mut self.tree[node];
+        let entry = &mut self.nodes[node];
+        let history = &mut self.moves[entry.mov];
 
         entry.value += (value - entry.value) / f64::from(entry.visits + 1);
         entry.visits += 1;
+
+        history.value += (value - history.value) / f64::from(history.visits + 1);
+        history.visits += 1;
 
         let parent = entry.parent;
         self.backward(parent, value);
@@ -291,7 +370,7 @@ impl Mcts {
         node: usize,
         game: &Game,
         rng: &mut impl Rng,
-        mut predicate: impl FnMut(&Self, &Node, &Game) -> bool,
+        mut predicate: impl FnMut(&Mcts, &Node, &Game) -> bool,
     ) -> Option<&Node> {
         loop {
             let mut game = game.clone();
@@ -300,7 +379,7 @@ impl Mcts {
             let reward = self.default_policy(&mut game, rng);
             self.backward(next, reward);
 
-            if !predicate(self, &self.tree[next], &game) {
+            if !predicate(self, &self.nodes[next], &game) {
                 break;
             }
         }
@@ -377,7 +456,7 @@ impl Mcts {
     ///
     /// Panics if `root` is out of bounds.
     fn compact(&mut self, root: usize, mut should_prune: impl FnMut(&Node) -> bool) {
-        let len = self.tree.len();
+        let len = self.nodes.len();
         assert!(root < len, "root out of bounds");
 
         // region: Mark phase.
@@ -390,29 +469,33 @@ impl Mcts {
         map[root] = 0;
         dst += 1;
 
-        if should_prune(&self.tree[root]) {
-            self.tree[root].head = SENTINEL;
-            self.tree[root].last = SENTINEL;
+        if should_prune(&self.nodes[root]) {
+            self.nodes[root].head = SENTINEL;
+            self.nodes[root].last = SENTINEL;
         }
 
         // Combined mark and relocation table pass. Walking parents before
         // children lets each node observe its parent's already-decided fate.
         for src in (root + 1)..len {
-            let parent = self.tree[src].parent;
+            let node = &self.nodes[src];
+
+            let parent = node.parent;
             assert!(parent < src, "tree must be topologically ordered");
 
-            // Recursively skip the descendants of anything already reclaimed or
+            // Recursively remove the descendants of anything already reclaimed or
             // severed.
-            if map[parent] == SENTINEL || self.tree[parent].head == SENTINEL {
+            if map[parent] == SENTINEL || self.nodes[parent].head == SENTINEL {
+                self.moves[node.mov].remove_batch(node.value, node.visits);
+
                 continue;
             }
 
             map[src] = dst;
             dst += 1;
 
-            if should_prune(&self.tree[src]) {
-                self.tree[src].head = SENTINEL;
-                self.tree[src].last = SENTINEL;
+            if should_prune(node) {
+                self.nodes[src].head = SENTINEL;
+                self.nodes[src].last = SENTINEL;
             }
         }
 
@@ -427,9 +510,9 @@ impl Mcts {
             }
 
             assert!(dst <= src);
-            self.tree.swap(src, dst);
+            self.nodes.swap(src, dst);
 
-            let node = &mut self.tree[dst];
+            let node = &mut self.nodes[dst];
 
             if !node.is_root() {
                 node.parent = map[node.parent];
@@ -446,6 +529,6 @@ impl Mcts {
 
         // endregion
 
-        self.tree.truncate(dst);
+        self.nodes.truncate(dst);
     }
 }

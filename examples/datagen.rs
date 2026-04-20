@@ -132,7 +132,7 @@ pub fn search(
     let &Node { mov, .. } = mcts
         .search(0, game, rng, time, iters, nodes)
         .expect("`node` should have children");
-    let &mov = mcts.moves.resolve(mov).unwrap();
+    let (&mov, _history) = mcts.moves.get_index(mov).unwrap();
 
     mov
 }

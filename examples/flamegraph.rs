@@ -46,16 +46,16 @@ pub fn main() -> anyhow::Result<()> {
     let _next = mcts.search(0, &game, &mut rng, args.time, args.iters, args.nodes);
     eprintln!(
         "Expanded {n} nodes in {elapsed:.2?}",
-        n = mcts.tree.len(),
+        n = mcts.nodes.len(),
         elapsed = start_time.elapsed()
     );
 
-    let names: Vec<String> = mcts.moves.iter().map(move_label).collect();
+    let names: Vec<String> = mcts.moves.keys().map(move_label).collect();
 
     let writer = BufWriter::new(File::create(args.destination)?);
 
     let start_time = Instant::now();
-    let num_bytes = serialize(&mcts.tree, &names, writer)?;
+    let num_bytes = serialize(&mcts.nodes, &names, writer)?;
 
     eprintln!(
         "Written {num_bytes} bytes in {elapsed:.2?}",
@@ -101,7 +101,7 @@ fn serialize(
 
     let at_nodes = pos;
     for node in tree {
-        pos += field::<2>(&mut out, node.mov.to_le_bytes())?;
+        pos += field::<8>(&mut out, node.mov.to_le_bytes())?;
         pos += field::<4>(&mut out, node.visits.to_le_bytes())?;
         pos += field::<8>(&mut out, node.value.to_le_bytes())?;
         pos += field::<8>(&mut out, node.parent.to_le_bytes())?;
