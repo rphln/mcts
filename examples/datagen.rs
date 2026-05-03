@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{Result, bail};
 use clap::Parser;
-use rand::{RngCore, SeedableRng};
+use rand::prelude::*;
 use swift_swallow::{TeamKey, character::CharacterKey};
 use swift_swallow_tree_search::{
     DefaultRng,

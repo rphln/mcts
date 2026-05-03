@@ -1,7 +1,7 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use rand::{SeedableRng, rngs::StdRng};
+use rand::prelude::*;
 use swift_swallow_tree_search::{
     game::{Color, Game, Move},
     mcts::{Mcts, Node},
