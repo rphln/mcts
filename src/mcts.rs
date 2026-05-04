@@ -419,6 +419,57 @@ impl Mcts {
         })
     }
 
+    /// Searches for the best move, adaptively managing the time budget.
+    ///
+    /// Allocates a total budget of `T = clock/20 + increment/2`. At each step,
+    /// given remaining budget `t`, runs two searches with allocations `t/6` and
+    /// `t/3`. Stops early if both searches agree on the best move, otherwise
+    /// continues recursively until `t` is exhausted.
+    ///
+    /// # Returns
+    ///
+    /// The total time spent searching.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there are no legal moves available during the search, which
+    /// represents a bug in either the MCTS or the game logic.
+    pub fn search_timed(
+        &mut self,
+        root: usize,
+        game: &Game,
+        rng: &mut impl Rng,
+        clock: Duration,
+        increment: Duration,
+    ) -> Duration {
+        let max_time = clock / 20 + increment / 2;
+        let min_time = Duration::from_millis(1);
+
+        let mut elapsed = Duration::ZERO;
+
+        loop {
+            let s1 = max_time.saturating_sub(elapsed) / 4;
+            let s2 = max_time.saturating_sub(elapsed) / 4;
+
+            elapsed += s1 + s2;
+
+            let first = self
+                .search(root, game, rng, Some(s1), None, None)
+                .expect("`node` should have children")
+                .mov;
+            let second = self
+                .search(root, game, rng, Some(s2), None, None)
+                .expect("`node` should have children")
+                .mov;
+
+            if first == second || elapsed + min_time >= max_time {
+                break;
+            }
+        }
+
+        elapsed
+    }
+
     /// Severs the descendants of each node for which `should_prune` returns
     /// `true`, leaving the node itself as a leaf.
     ///
