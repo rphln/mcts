@@ -1,7 +1,7 @@
 use std::io::{self, BufWriter, Write};
 
 use rand::prelude::*;
-use swift_swallow_rpc::{Handshake, Outcome, Request, Search};
+use swift_swallow_rpc::{Handshake, Request, Search};
 use swift_swallow_tree_search::{
     DefaultRng,
     game::{Color, Game, Move},
@@ -36,15 +36,7 @@ fn main() -> anyhow::Result<()> {
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Play(args) => {
-                game.play(args.mov);
-
-                // TODO: Handle draws.
-                let res = match game.world.active_team() {
-                    _ if !game.is_over() => None,
-                    Color::White => Some(Outcome::WhiteWins),
-                    Color::Black => Some(Outcome::BlackWins),
-                };
-
+                let res = game.play(args.mov);
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Search(args) => {

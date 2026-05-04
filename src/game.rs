@@ -2,7 +2,7 @@ use std::iter::once;
 
 use either::Either;
 use swift_swallow::{
-    Command, Rules, TeamKey, World, decide, query_commands, rules, setup,
+    Command, Outcome, Rules, TeamKey, World, decide, query_commands, rules, setup,
 };
 
 /// Alias for a game move (re-export of [`Command`]).
@@ -22,7 +22,7 @@ pub struct Game {
     pub rules: Rules,
     /// Local turn indicator used to alternate sides every move, regardless of
     /// what `world.active_team()` reports.
-    pub color: TeamKey,
+    pub color: Color,
     /// Total number of plies played.
     ///
     /// Increments by 1 per `play`, regardless of whether it is a real or fake
@@ -40,7 +40,7 @@ impl Game {
         let rules = rules();
         let world = setup(game_seed, randomize_ready_at, &rules)?;
 
-        Ok(Self { world, rules, color: TeamKey::White, depth: 0 })
+        Ok(Self { world, rules, color: Color::White, depth: 0 })
     }
 
     /// Whether the underlying world considers the game finished.
@@ -64,11 +64,13 @@ impl Game {
     }
 
     /// Applies a move to the world, alternates `color` and increments `depth`.
-    pub fn play(&mut self, mov: Move) {
+    pub fn play(&mut self, mov: Move) -> Option<Outcome> {
         let _decide = decide(mov, &self.rules, &mut self.world);
 
         self.color = !self.color;
         self.depth += 1;
+
+        self.world.outcome()
     }
 
     /// Heuristic score from `color`'s perspective.
@@ -76,6 +78,10 @@ impl Game {
     pub fn evaluate(&self, color: Color) -> f64 {
         const W0: f64 = -0.216;
         const W1: f64 = 0.454;
+
+        if let Some(Outcome::Draw) = self.world.outcome() {
+            return 0.;
+        }
 
         self.world
             .characters

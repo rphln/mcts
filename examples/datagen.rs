@@ -11,7 +11,7 @@ use std::{
 use anyhow::{Result, bail};
 use clap::Parser;
 use rand::prelude::*;
-use swift_swallow::{TeamKey, character::CharacterKey};
+use swift_swallow::{Outcome, TeamKey, character::CharacterKey};
 use swift_swallow_tree_search::{
     DefaultRng,
     game::{Color, Game, Move},
@@ -55,7 +55,7 @@ fn run_game(seed: u64, args: &Args) {
 
     let mut records = Vec::new();
 
-    for turn in 0..1024 {
+    for turn in 0.. {
         if game.is_over() {
             break;
         }
@@ -115,9 +115,8 @@ fn run_game(seed: u64, args: &Args) {
         }
     }
 
-    if !game.is_over() {
+    if let Outcome::Draw = game.world.outcome().unwrap() {
         eprintln!("Seed {seed:016x} exceeded the turn limit; aborting.");
-        return;
     }
 
     let destination = args.destination.join(format!("{seed:016x}.json"));
