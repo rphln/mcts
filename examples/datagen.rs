@@ -87,8 +87,10 @@ fn run_game(seed: u64, args: &Args) {
                 character: character.key,
                 team: character.team,
 
-                active_character,
-                active_team,
+                is_alive: !character.is_defeated(),
+
+                is_active_character: character.key == active_character,
+                is_active_team: character.team == active_team,
 
                 ready_at: character.ready_at,
                 cooldown: character.cooldown,
@@ -96,19 +98,28 @@ fn run_game(seed: u64, args: &Args) {
                 can_act: character.can_act,
                 can_move: character.can_move,
 
+                movement: character.movement,
+
+                q: character.position.q,
+                r: character.position.r,
+
                 maximum_health: character.health,
                 current_health: character.current_health(),
 
-                is_alive: !character.is_defeated(),
-
                 block: character.block,
-                poison: character.counters.poison,
 
                 strength: character.counters.strength,
+                temporary_strength: character.counters.temporary_strength,
+
                 dexterity: character.counters.dexterity,
+                temporary_dexterity: character.counters.temporary_dexterity,
+
+                poison: character.counters.poison,
 
                 weakness: max(character.timers.weak - game.world.tick, 0),
                 vulnerable: max(character.timers.vulnerable - game.world.tick, 0),
+
+                is_taunted: character.counters.taunt.is_some(),
             };
 
             records.push(record);
@@ -126,6 +137,7 @@ fn run_game(seed: u64, args: &Args) {
 }
 
 #[derive(Debug, serde::Serialize)]
+#[expect(clippy::struct_excessive_bools)]
 pub struct Record {
     pub seed: u64,
 
@@ -135,8 +147,10 @@ pub struct Record {
     pub character: CharacterKey,
     pub team: TeamKey,
 
-    pub active_character: CharacterKey,
-    pub active_team: TeamKey,
+    pub is_alive: bool,
+
+    pub is_active_character: bool,
+    pub is_active_team: bool,
 
     pub ready_at: i32,
     pub cooldown: i32,
@@ -144,17 +158,26 @@ pub struct Record {
     pub can_act: bool,
     pub can_move: bool,
 
+    pub movement: u32,
+
+    pub q: i32,
+    pub r: i32,
+
     pub maximum_health: i32,
     pub current_health: i32,
 
-    pub is_alive: bool,
-
-    pub poison: i32,
     pub block: i32,
 
     pub strength: i32,
+    pub temporary_strength: i32,
+
     pub dexterity: i32,
+    pub temporary_dexterity: i32,
+
+    pub poison: i32,
 
     pub weakness: i32,
     pub vulnerable: i32,
+
+    pub is_taunted: bool,
 }
