@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
     let game_seed = 0;
     let randomize_ready_at = false;
 
-    let mut game = Game::new(game_seed, randomize_ready_at)?;
+    let mut game = Game::new(game_seed, randomize_ready_at);
 
     let mut tx = BufWriter::new(io::stdout());
 
@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Reset(args) => {
-                game = Game::new(args.seed, args.randomize_ready_at)?;
+                game = Game::new(args.seed, args.randomize_ready_at);
 
                 let res = ();
                 serde_json::to_writer(&mut tx, &res)?;

@@ -38,7 +38,7 @@ pub fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let start_time = Instant::now();
 
-    let game = Game::new(args.seed, false)?;
+    let game = Game::new(args.seed, false);
 
     let mut rng = DefaultRng::seed_from_u64(args.seed);
     let mut mcts = Mcts::new(Move::None { team: Color::Black });

@@ -8,7 +8,7 @@ use swift_swallow_tree_search::{
 };
 
 fn search(nodes: usize) -> Option<Node> {
-    let game = Game::new(0, false).unwrap();
+    let game = Game::new(0, false);
 
     let mut rng = StdRng::seed_from_u64(0);
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
