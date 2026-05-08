@@ -8,6 +8,7 @@ use std::{
 
 use clap::Parser;
 use rand::prelude::*;
+use swift_swallow::{character::CharacterKey, effect::Context, grid::Position};
 use swift_swallow_tree_search::{
     DefaultRng,
     game::{Color, Game, Move},
@@ -147,11 +148,12 @@ const CHARACTERS: [&str; 8] = [
     "Sidewinder ⚫",
 ];
 
-const ACTIONS: [&str; 56] = [
+const ACTIONS: [&str; 60] = [
     "Strike (Warden) ⚪",
     "Defend (Warden) ⚪",
     "Dash (Warden) ⚪",
     "Provoke ⚪",
+    "Intervene ⚪",
     "Barricade ⚪",
     "Impervious ⚪",
     "Juggernaut ⚪",
@@ -159,20 +161,21 @@ const ACTIONS: [&str; 56] = [
     "Defend (Warden) ⚫",
     "Dash (Warden) ⚫",
     "Provoke ⚫",
+    "Intervene ⚫",
     "Barricade ⚫",
     "Impervious ⚫",
     "Juggernaut ⚫",
     "Strike (Berserker) ⚪",
     "Defend (Berserker) ⚪",
     "Dash (Berserker) ⚪",
-    "Onslaught ⚪",
+    "Throw ⚪",
     "Upheaval ⚪",
     "Grit ⚪",
     "Overpower ⚪",
     "Strike (Berserker) ⚫",
     "Defend (Berserker) ⚫",
     "Dash (Berserker) ⚫",
-    "Onslaught ⚫",
+    "Throw ⚫",
     "Upheaval ⚫",
     "Grit ⚫",
     "Overpower ⚫",
@@ -194,6 +197,7 @@ const ACTIONS: [&str; 56] = [
     "Defend (Sidewinder) ⚪",
     "Dash (Sidewinder) ⚪",
     "Adrenaline ⚪",
+    "Disengage ⚪",
     "Envenom ⚪",
     "Catalyst ⚪",
     "Bane ⚪",
@@ -201,6 +205,7 @@ const ACTIONS: [&str; 56] = [
     "Defend (Sidewinder) ⚫",
     "Dash (Sidewinder) ⚫",
     "Adrenaline ⚫",
+    "Disengage ⚫",
     "Envenom ⚫",
     "Catalyst ⚫",
     "Bane ⚫",
@@ -223,20 +228,27 @@ fn move_label(mov: &Move) -> String {
                 y = destination.r,
             )
         }
-        Move::Act { action, target_hint: Some(target), .. } => {
-            format!(
-                "🎯 {label} → {target}",
-                label = ACTIONS[action.0],
-                target = CHARACTERS[target.0],
-            )
-        }
-        Move::Act { action, destination, .. } => {
-            format!(
-                "🎯 {label} → ⟨{x}, {y}⟩",
-                label = ACTIONS[action.0],
-                x = destination.q,
-                y = destination.r,
-            )
+        &Move::Act { action, context: Context { characters, positions }, .. } => {
+            let targets = characters
+                .iter()
+                .zip(positions.iter())
+                .skip(1) // skip caster
+                .filter_map(|(&character, &position)| {
+                    if character != CharacterKey::default() {
+                        Some(CHARACTERS[character.0].to_string())
+                    } else if position != Position::default() {
+                        Some(format!("⟨{q}, {r}⟩", q = position.q, r = position.r))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            if targets.is_empty() {
+                format!("🎯 {}", ACTIONS[action.0])
+            } else {
+                format!("🎯 {} → {}", ACTIONS[action.0], targets.join(" · "))
+            }
         }
     }
 }
