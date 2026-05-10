@@ -8,7 +8,12 @@ use std::{
 
 use clap::Parser;
 use rand::prelude::*;
-use swift_swallow::{character::CharacterKey, effect::Context, grid::Position};
+use swift_swallow::{
+    character::CharacterKey,
+    effect::Context,
+    grid::Position,
+    rules::characters::{ACTIONS, CHARACTERS},
+};
 use swift_swallow_tree_search::{
     DefaultRng,
     game::{Color, Game, Move},
@@ -136,80 +141,6 @@ fn serialize(
 fn parse_millis(arg: &str) -> Result<Duration, ParseIntError> {
     Ok(Duration::from_millis(arg.parse()?))
 }
-
-const CHARACTERS: [&str; 8] = [
-    "Warden ⚪",
-    "Warden ⚫",
-    "Berserker ⚪",
-    "Berserker ⚫",
-    "Scholar ⚪",
-    "Scholar ⚫",
-    "Sidewinder ⚪",
-    "Sidewinder ⚫",
-];
-
-const ACTIONS: [&str; 60] = [
-    "Strike (Warden) ⚪",
-    "Defend (Warden) ⚪",
-    "Dash (Warden) ⚪",
-    "Provoke ⚪",
-    "Intervene ⚪",
-    "Barricade ⚪",
-    "Impervious ⚪",
-    "Juggernaut ⚪",
-    "Strike (Warden) ⚫",
-    "Defend (Warden) ⚫",
-    "Dash (Warden) ⚫",
-    "Provoke ⚫",
-    "Intervene ⚫",
-    "Barricade ⚫",
-    "Impervious ⚫",
-    "Juggernaut ⚫",
-    "Strike (Berserker) ⚪",
-    "Defend (Berserker) ⚪",
-    "Dash (Berserker) ⚪",
-    "Throw ⚪",
-    "Upheaval ⚪",
-    "Grit ⚪",
-    "Overpower ⚪",
-    "Strike (Berserker) ⚫",
-    "Defend (Berserker) ⚫",
-    "Dash (Berserker) ⚫",
-    "Throw ⚫",
-    "Upheaval ⚫",
-    "Grit ⚫",
-    "Overpower ⚫",
-    "Strike (Scholar) ⚪",
-    "Defend (Scholar) ⚪",
-    "Dash (Scholar) ⚪",
-    "Adloquium ⚪",
-    "Entrench ⚪",
-    "Ruin ⚪",
-    "Malaise ⚪",
-    "Strike (Scholar) ⚫",
-    "Defend (Scholar) ⚫",
-    "Dash (Scholar) ⚫",
-    "Adloquium ⚫",
-    "Entrench ⚫",
-    "Ruin ⚫",
-    "Malaise ⚫",
-    "Strike (Sidewinder) ⚪",
-    "Defend (Sidewinder) ⚪",
-    "Dash (Sidewinder) ⚪",
-    "Adrenaline ⚪",
-    "Disengage ⚪",
-    "Envenom ⚪",
-    "Catalyst ⚪",
-    "Bane ⚪",
-    "Strike (Sidewinder) ⚫",
-    "Defend (Sidewinder) ⚫",
-    "Dash (Sidewinder) ⚫",
-    "Adrenaline ⚫",
-    "Disengage ⚫",
-    "Envenom ⚫",
-    "Catalyst ⚫",
-    "Bane ⚫",
-];
 
 fn move_label(mov: &Move) -> String {
     match mov {
