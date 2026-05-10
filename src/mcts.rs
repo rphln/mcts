@@ -303,19 +303,10 @@ impl Mcts {
             let node = &self.nodes[index];
             let history = &self.moves[node.mov];
 
-            if history.visits < 1 {
-                return index;
-            }
-
             let n = f64::from(node.visits);
+            let beta = 1. / (1. + n);
 
-            // Found empirically. See Section 8.4.2 in [1] for other schedules.
-            //
-            // [1]: <https://papersdb.cs.ualberta.ca/~papersdb/uploaded_files/1029/paper_thesis.pdf>
-            let beta = f64::sqrt(1. / (1. + n));
-            std::assert_matches!(beta, 0.0..=1.0, "`beta` should be in [0, 1]");
-
-            let value = (1. - beta) * node.value + beta * history.value;
+            let value = node.value + beta * (history.value - node.value);
             if value > best_value {
                 best_index = index;
                 best_value = value;
@@ -330,8 +321,19 @@ impl Mcts {
     /// # Panics
     ///
     /// Panics if no legal moves are available during the roll-out.
-    pub fn default_policy(&self, game: &mut Game, _rng: &mut impl Rng) -> f64 {
-        game.evaluate(game.color)
+    pub fn default_policy(&self, game: &mut Game, rng: &mut impl Rng) -> f64 {
+        let color = game.color;
+
+        for _ in 0..2 {
+            if game.is_over() {
+                break;
+            }
+
+            let mov = game.moves().choose(rng).unwrap();
+            game.play(mov);
+        }
+
+        game.evaluate(color)
     }
 
     /// Back-propagates the reward from a leaf node up to the root.
