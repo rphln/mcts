@@ -1,4 +1,5 @@
 use std::{
+    fmt::Display,
     fs::File,
     io::{self, BufWriter, Write},
     num::ParseIntError,
@@ -9,14 +10,7 @@ use std::{
 use clap::Parser;
 use rand::prelude::*;
 use swift_swallow::{
-    character::CharacterKey,
-    effect::Context,
-    grid::Position,
-    rules::{
-        characters::{ACTIONS, CHARACTERS},
-        rules,
-    },
-    setup,
+    character::CharacterKey, effect::Context, grid::Position, rules::rules, setup,
 };
 use swift_swallow_tree_search::{
     DefaultRng,
@@ -61,11 +55,35 @@ pub fn main() -> anyhow::Result<()> {
     let _next = mcts.search(0, &game, &mut rng, args.time, args.iters, args.nodes);
     eprintln!(
         "Expanded {n} nodes in {elapsed:.2?}",
-        n = mcts.nodes.len(),
+        n = mcts.len(),
         elapsed = start_time.elapsed()
     );
 
-    let names: Vec<String> = mcts.moves.keys().map(move_label).collect();
+    let names: Vec<String> = {
+        let character_names: Vec<String> = game
+            .world
+            .characters
+            .iter()
+            .map(|character| match character.team {
+                Color::White => format!("{} ⚪", character.name),
+                Color::Black => format!("{} ⚫", character.name),
+            })
+            .collect();
+        let action_names: Vec<String> = game
+            .world
+            .actions
+            .iter()
+            .map(|action| match game.world.characters[action.character].team {
+                Color::White => format!("{} ⚪", action.name),
+                Color::Black => format!("{} ⚫", action.name),
+            })
+            .collect();
+
+        mcts.moves
+            .keys()
+            .map(|mov| move_label(mov, &character_names, &action_names))
+            .collect()
+    };
 
     let writer = BufWriter::new(File::create(args.destination)?);
 
@@ -151,43 +169,41 @@ fn parse_millis(arg: &str) -> Result<Duration, ParseIntError> {
     Ok(Duration::from_millis(arg.parse()?))
 }
 
-fn move_label(mov: &Move) -> String {
+fn move_label(mov: &Move, names: &[impl Display], actions: &[impl Display]) -> String {
     match mov {
         Move::None { team } => match team {
-            Color::White => "⚪".to_owned(),
-            Color::Black => "⚫".to_owned(),
+            Color::White => "⚪".into(),
+            Color::Black => "⚫".into(),
         },
+
         Move::Pass { character, .. } => {
-            format!("⌛ {label} → Pass", label = CHARACTERS[character.0])
+            format!("⌛ {} → Pass", names[character.0])
         }
+
         Move::Move { character, destination } => {
-            format!(
-                "🧭 {label} → ⟨{x}, {y}⟩",
-                label = CHARACTERS[character.0],
-                x = destination.q,
-                y = destination.r,
-            )
+            format!("🧭 {} → {}", names[character.0], destination)
         }
-        &Move::Act { action, context: Context { characters, positions }, .. } => {
+
+        Move::Act { action, context: Context { characters, positions }, .. } => {
+            let label = format!("🎯 {}", actions[action.0]);
             let targets = characters
                 .iter()
-                .zip(positions.iter())
-                .skip(1) // skip caster
+                .zip(positions)
+                .skip(1) // Skip the caster.
                 .filter_map(|(&character, &position)| {
                     if character != CharacterKey::default() {
-                        Some(CHARACTERS[character.0].to_string())
+                        Some(names[character.0].to_string())
                     } else if position != Position::default() {
-                        Some(format!("⟨{q}, {r}⟩", q = position.q, r = position.r))
+                        Some(position.to_string())
                     } else {
                         None
                     }
                 })
-                .collect::<Vec<_>>();
+                .reduce(|acc, target| format!("{acc} · {target}"));
 
-            if targets.is_empty() {
-                format!("🎯 {}", ACTIONS[action.0])
-            } else {
-                format!("🎯 {} → {}", ACTIONS[action.0], targets.join(" · "))
+            match targets {
+                Some(targets) => format!("{label} → {targets}"),
+                None => label,
             }
         }
     }
