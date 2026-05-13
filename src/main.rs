@@ -1,6 +1,7 @@
 use std::io::{self, BufWriter, Write};
 
 use rand::prelude::*;
+use swift_swallow::{rules::rules, setup};
 use swift_swallow_rpc::{Handshake, Request, Search};
 use swift_swallow_tree_search::{
     DefaultRng,
@@ -10,9 +11,16 @@ use swift_swallow_tree_search::{
 
 fn main() -> anyhow::Result<()> {
     let game_seed = 0;
-    let randomize_ready_at = false;
 
-    let mut game = Game::new(game_seed, randomize_ready_at);
+    let shuffle = false;
+    let max_ply = None;
+
+    let mut game = {
+        let rules = rules();
+        let world = setup(game_seed, shuffle, &rules);
+
+        Game::new(world, rules, max_ply)
+    };
 
     let mut tx = BufWriter::new(io::stdout());
 
@@ -30,13 +38,20 @@ fn main() -> anyhow::Result<()> {
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Reset(args) => {
-                game = Game::new(args.seed, args.randomize_ready_at);
+                game = {
+                    let rules = rules();
+                    let world = setup(args.seed, args.shuffle, &rules);
+
+                    Game::new(world, rules, args.max_ply)
+                };
 
                 let res = ();
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Play(args) => {
-                let res = game.play(args.mov);
+                game.play(args.mov);
+
+                let res = game.result();
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Search(args) => {

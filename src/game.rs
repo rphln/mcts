@@ -1,9 +1,4 @@
-use std::iter::once;
-
-use either::Either;
-use swift_swallow::{
-    Command, Outcome, Rules, TeamKey, World, decide, query_commands, rules, setup,
-};
+use swift_swallow::{Command, Outcome, Rules, TeamKey, World, decide, query_commands};
 
 /// Alias for a game move (re-export of [`Command`]).
 pub type Move = Command;
@@ -11,63 +6,61 @@ pub type Move = Command;
 /// Alias for a side to move (re-export of [`TeamKey`]).
 pub type Color = TeamKey;
 
-/// Minimal game wrapper around `swift_swallow` providing a turn-alternating
-/// interface, legal-move generation, plies played, and a simple evaluation
-/// function.
+/// A game wrapper around `swift_swallow` that enforces strict turn alternation,
+/// generates legal moves, and tracks plies.
+///
+/// Each `play` call increments the ply count, even if the move is a no-op due
+/// to turn enforcement.
 #[derive(Clone)]
 pub struct Game {
-    /// Underlying world state.
     pub world: World,
-    /// Rules for action generation and execution.
     pub rules: Rules,
-    /// Local turn indicator used to alternate sides every move, regardless of
-    /// what `world.active_team()` reports.
     pub color: Color,
-    /// Total number of plies played.
-    ///
-    /// Increments by 1 per `play`, regardless of whether it is a real or fake
-    /// move.
     pub depth: usize,
+    pub max_depth: Option<usize>,
 }
 
 impl Game {
-    /// Constructs a new game using the default rules and content setup.
     #[must_use]
-    pub fn new(game_seed: u64, randomize_ready_at: bool) -> Game {
-        let rules = rules();
-        let world = setup(game_seed, randomize_ready_at, &rules);
-
-        Self { world, rules, color: Color::White, depth: 0 }
+    pub fn new(world: World, rules: Rules, max_depth: Option<usize>) -> Game {
+        Self { world, rules, color: Color::White, depth: 0, max_depth }
     }
 
-    /// Whether the underlying world considers the game finished.
-    #[must_use]
-    pub fn is_over(&self) -> bool {
-        self.world.is_game_over()
-    }
-
-    /// Iterator over legal moves for the current `color`.
     #[must_use]
     pub fn moves(&self) -> impl ExactSizeIterator<Item = Move> {
-        if self.world.active_team() == self.color {
+        let moves = if self.world.active_team() == self.color {
             let query = query_commands(&self.rules, &self.world);
-
-            let iter = query.includes.into_iter();
-            Either::Left(iter)
+            query.includes
         } else {
-            let iter = once(Command::None { team: self.color });
-            Either::Right(iter)
-        }
+            vec![Command::None { team: self.color }]
+        };
+
+        moves.into_iter()
     }
 
-    /// Applies a move to the world, alternates `color` and increments `depth`.
-    pub fn play(&mut self, mov: Move) -> Option<Outcome> {
-        let _decide = decide(mov, &self.rules, &mut self.world);
-
+    pub fn play(&mut self, mov: Move) {
         self.color = !self.color;
         self.depth += 1;
 
-        self.world.outcome()
+        if let Move::None { .. } = mov {
+            return;
+        }
+
+        decide(mov, &self.rules, &mut self.world);
+    }
+
+    #[must_use]
+    pub fn result(&self) -> Option<Outcome> {
+        if self.max_depth.is_some_and(|max| self.depth >= max) {
+            Some(Outcome::Draw)
+        } else {
+            self.world.result()
+        }
+    }
+
+    #[must_use]
+    pub fn is_over(&self) -> bool {
+        self.result().is_some()
     }
 
     /// Heuristic score from `color`'s perspective.
@@ -76,7 +69,7 @@ impl Game {
         const W0: f64 = -0.216;
         const W1: f64 = 0.454;
 
-        if let Some(Outcome::Draw) = self.world.outcome() {
+        if let Some(Outcome::Draw) = self.result() {
             return 0.;
         }
 

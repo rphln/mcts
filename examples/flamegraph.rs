@@ -12,7 +12,11 @@ use swift_swallow::{
     character::CharacterKey,
     effect::Context,
     grid::Position,
-    rules::characters::{ACTIONS, CHARACTERS},
+    rules::{
+        characters::{ACTIONS, CHARACTERS},
+        rules,
+    },
+    setup,
 };
 use swift_swallow_tree_search::{
     DefaultRng,
@@ -44,7 +48,12 @@ pub fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let start_time = Instant::now();
 
-    let game = Game::new(args.seed, false);
+    let game = {
+        let rules = rules();
+        let world = setup(args.seed, false, &rules);
+
+        Game::new(world, rules, None)
+    };
 
     let mut rng = DefaultRng::seed_from_u64(args.seed);
     let mut mcts = Mcts::new(Move::None { team: Color::Black });

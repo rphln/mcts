@@ -16,8 +16,6 @@ rand_xoshiro.workspace = true
 rustc-hash = "2.1.1"
 indexmap = "2.14.0"
 
-either = "1.15.0"
-
 anyhow = "1.0.99"
 clap = { version = "4.5.47", features = ["derive"] }
 
