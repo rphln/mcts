@@ -9,9 +9,7 @@ use std::{
 
 use clap::Parser;
 use rand::prelude::*;
-use swift_swallow::{
-    character::CharacterKey, effect::Context, grid::Position, rules::rules, setup,
-};
+use swift_swallow::{effect::Context, rules::rules, setup};
 use swift_swallow_tree_search::{
     DefaultRng,
     game::{Color, Game, Move},
@@ -191,13 +189,10 @@ fn move_label(mov: &Move, names: &[impl Display], actions: &[impl Display]) -> S
                 .zip(positions)
                 .skip(1) // Skip the caster.
                 .filter_map(|(&character, &position)| {
-                    if character != CharacterKey::default() {
-                        Some(names[character.0].to_string())
-                    } else if position != Position::default() {
-                        Some(position.to_string())
-                    } else {
-                        None
-                    }
+                    let character = character.map(|chr| names[chr.0].to_string());
+                    let position = position.map(|pos| pos.to_string());
+
+                    character.or(position)
                 })
                 .reduce(|acc, target| format!("{acc} · {target}"));
 
