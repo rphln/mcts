@@ -174,29 +174,23 @@ impl Mcts {
 
     /// Returns the number of nodes in the tree.
     #[must_use]
+    #[expect(clippy::len_without_is_empty, reason = "The tree can never be empty")]
     pub const fn len(&self) -> usize {
         self.nodes.len()
     }
 
-    /// Returns `true` if the tree only has the root.
+    /// Returns the most-visited child of `node`, or `None` if `root` is a leaf.
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.len() == 1
+    pub fn best_child(&self, node: usize) -> Option<usize> {
+        let head = self.nodes[node].head;
+        let last = self.nodes[node].last;
+
+        (head..last).into_iter().max_by_key(|&child| self.nodes[child].visits)
     }
 
-    /// Returns an iterator over the sequence of best moves found so far.
-    pub fn principal_variation(&self) -> impl Iterator<Item = &Node> {
-        successors(self.nodes.first(), |parent| {
-            self.nodes
-                .get(parent.head..parent.last)?
-                .iter()
-                .max_by_key(|node| node.visits)
-        })
-    }
-
-    /// Returns an iterator over the ancestors of `node`, starting at `node`.
-    pub fn ancestors(&self, node: usize) -> impl Iterator<Item = &Node> {
-        successors(self.nodes.get(node), |node| self.nodes.get(node.parent))
+    /// Returns an iterator over the principal variation rooted at `node`.
+    pub fn principal_variation(&self, node: usize) -> impl Iterator<Item = usize> {
+        successors(self.best_child(node), |&next| self.best_child(next))
     }
 
     /// Recursively traverses the tree from a given `node` and selects the next
@@ -373,7 +367,7 @@ impl Mcts {
         game: &Game,
         rng: &mut impl Rng,
         mut predicate: impl FnMut(&Mcts, &Node, &Game) -> bool,
-    ) -> Option<&Node> {
+    ) -> Option<usize> {
         loop {
             let mut game = game.clone();
             let next = self.select_and_expand(node, &mut game, rng);
@@ -386,7 +380,7 @@ impl Mcts {
             }
         }
 
-        self.principal_variation().nth(1)
+        self.best_child(node)
     }
 
     /// Searches from `node` until one of `max_time`, `max_iters` or `max_nodes`
@@ -404,7 +398,7 @@ impl Mcts {
         max_time: Option<Duration>,
         max_iters: Option<u32>,
         max_nodes: Option<usize>,
-    ) -> Option<&Node> {
+    ) -> Option<usize> {
         let mut iters = 0;
         let mut nodes = 0;
 
@@ -438,7 +432,7 @@ impl Mcts {
     /// represents a bug in either the MCTS or the game logic.
     pub fn search_timed(
         &mut self,
-        root: usize,
+        node: usize,
         game: &Game,
         rng: &mut impl Rng,
         clock: Duration,
@@ -456,13 +450,11 @@ impl Mcts {
             elapsed += s1 + s2;
 
             let first = self
-                .search(root, game, rng, Some(s1), None, None)
-                .expect("`node` should have children")
-                .mov;
+                .search(node, game, rng, Some(s1), None, None)
+                .expect("`node` should have children");
             let second = self
-                .search(root, game, rng, Some(s2), None, None)
-                .expect("`node` should have children")
-                .mov;
+                .search(node, game, rng, Some(s2), None, None)
+                .expect("`node` should have children");
 
             if first == second || elapsed + min_time >= max_time {
                 break;

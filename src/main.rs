@@ -6,7 +6,7 @@ use swift_swallow_rpc::{Handshake, Request, Search};
 use swift_swallow_tree_search::{
     DefaultRng,
     game::{Color, Game, Move},
-    mcts::{Mcts, Node},
+    mcts::Mcts,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -88,10 +88,12 @@ pub fn search(game: &mut Game, args: &Search) -> Move {
     let mut rng = DefaultRng::seed_from_u64(args.seed);
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
 
-    let &Node { mov, .. } = mcts
+    let best = mcts
         .search(0, game, &mut rng, args.time, args.iters, args.nodes)
-        .expect("`node` should have children");
-    let (&mov, _history) = mcts.moves.get_index(mov).unwrap();
+        .expect("root should have children");
+
+    let node = &mcts.nodes[best];
+    let (&mov, _history) = mcts.moves.get_index(node.mov).unwrap();
 
     mov
 }

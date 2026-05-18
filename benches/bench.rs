@@ -5,10 +5,10 @@ use rand::prelude::*;
 use swift_swallow::{rules::rules, setup};
 use swift_swallow_tree_search::{
     game::{Color, Game, Move},
-    mcts::{Mcts, Node},
+    mcts::Mcts,
 };
 
-fn search(nodes: usize) -> Option<Node> {
+fn search(nodes: usize) -> Option<usize> {
     let game = {
         let rules = rules();
         let world = setup(0, false, &rules);
@@ -19,7 +19,7 @@ fn search(nodes: usize) -> Option<Node> {
     let mut rng = StdRng::seed_from_u64(0);
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
 
-    mcts.search(0, &game, &mut rng, None, None, Some(nodes)).cloned()
+    mcts.search(0, &game, &mut rng, None, None, Some(nodes))
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
