@@ -9,7 +9,7 @@ use std::{
 
 use clap::Parser;
 use rand::prelude::*;
-use swift_swallow::{effect::Context, rules::rules, setup};
+use swift_swallow::{dsl::Context, rules::rules, setup};
 use swift_swallow_tree_search::{
     DefaultRng,
     game::{Color, Game, Move},
