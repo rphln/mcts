@@ -616,24 +616,21 @@ Visits: ${node.visits} (${share.toFixed(1)}%)`;
         // region: Names
 
         const namesPtr = Number(footer.getBigUint64(16, true));
-        const namesLen = Number(footer.getBigUint64(24, true));
+        const namesEnd = Number(footer.getBigUint64(24, true));
 
-        const namesBuf = new DataView(
-          await file.slice(namesPtr, namesPtr + namesLen * 16).arrayBuffer(),
-        );
+        const nameSlice = await file.slice(namesPtr, namesEnd).arrayBuffer();
+        const nameData = new DataView(nameSlice);
 
         const de = new TextDecoder();
-        const names = await Promise.all(
-          range(0, namesLen * 16, 16).map(async (offset) => {
-            const strPtr = Number(namesBuf.getBigUint64(offset + 0, true));
-            const strLen = Number(namesBuf.getBigUint64(offset + 8, true));
+        const names = [];
 
-            const buf = await file.slice(strPtr, strPtr + strLen).arrayBuffer();
-            const str = de.decode(buf);
+        for (let offset = 0; offset < nameData.byteLength; ) {
+          const len = Number(nameData.getBigUint64(offset, true));
+          offset += 8;
 
-            return str;
-          }),
-        );
+          names.push(de.decode(nameSlice.slice(offset, offset + len)));
+          offset += len;
+        }
 
         // endregion
 

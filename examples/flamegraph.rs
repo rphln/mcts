@@ -96,7 +96,7 @@ pub fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// ┌─ nodes ────────────────────────────────── `at_nodes` ─┐
+/// ┌─ nodes ───────────────────────────────── `nodes_pos` ─┐
 /// │  Node × count                                         │
 /// │    u16  mov                                           │
 /// │    u32  visits                                        │
@@ -104,17 +104,15 @@ pub fn main() -> anyhow::Result<()> {
 /// │    u64  parent                                        │
 /// │    u64  head                                          │
 /// │    u64  last                                          │
-/// ├─ name data ─────────────────────── `at_name_data` ────┤
-/// │  u8[]                                                 │
-/// ├─ name index ────────────────────── `at_name_index` ───┤
-/// │  Entry × count                                        │
-/// │    u64  ptr                                           │
+/// ├─ names ───────────────────────────────── `names_pos` ─┤
+/// │  String × count                                       │
 /// │    u64  len                                           │
-/// ├─ footer ──────────────────────────────────────────────┤
-/// │  u64  ptr    (`at_nodes`)                             │
+/// │    u8[] bytes                                         │
+/// ├─ footer ──────────────────────────────── `names_end` ─┤
+/// │  u64  ptr    (`nodes_pos`)                            │
 /// │  u64  count                                           │
-/// │  u64  ptr    (`at_name_index`)                        │
-/// │  u64  count                                           │
+/// │  u64  ptr    (`names_pos`)                            │
+/// │  u64  ptr    (`names_end`)                            │
 /// └───────────────────────────────────────────────────────┘
 fn serialize(
     tree: &[Node],
@@ -130,7 +128,7 @@ fn serialize(
 
     let mut pos = 0;
 
-    let at_nodes = pos;
+    let nodes_pos = pos;
     for node in tree {
         pos += field::<8>(&mut out, node.mov.to_le_bytes())?;
         pos += field::<4>(&mut out, node.visits.to_le_bytes())?;
@@ -140,25 +138,20 @@ fn serialize(
         pos += field::<8>(&mut out, node.last.to_le_bytes())?;
     }
 
-    let at_name_data = pos;
+    let names_pos = pos;
     for name in names {
+        pos += field::<8>(&mut out, name.len().to_le_bytes())?;
+
         out.write_all(name.as_bytes())?;
         pos += name.len();
     }
+    let names_end = pos;
 
-    let at_name_index = pos;
-    let mut name_ptr = at_name_data;
-    for name in names {
-        pos += field::<8>(&mut out, name_ptr.to_le_bytes())?;
-        pos += field::<8>(&mut out, name.len().to_le_bytes())?;
-        name_ptr += name.len();
-    }
-
-    pos += field::<8>(&mut out, at_nodes.to_le_bytes())?;
+    pos += field::<8>(&mut out, nodes_pos.to_le_bytes())?;
     pos += field::<8>(&mut out, tree.len().to_le_bytes())?;
 
-    pos += field::<8>(&mut out, at_name_index.to_le_bytes())?;
-    pos += field::<8>(&mut out, names.len().to_le_bytes())?;
+    pos += field::<8>(&mut out, names_pos.to_le_bytes())?;
+    pos += field::<8>(&mut out, names_end.to_le_bytes())?;
 
     Ok(pos)
 }
