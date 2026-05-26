@@ -7,72 +7,111 @@ use indexmap::IndexMap;
 use rand::prelude::*;
 use rustc_hash::FxBuildHasher;
 
-use crate::game::{Game, Move};
+use crate::{
+    game::{Game, Move},
+    normal_inverse_gamma::{NormalInverseGamma, NormalInverseGammaPriors},
+};
 
-/// An implementation of the Monte Carlo Tree Search algorithm with the
-/// following modifications:
+/// Placeholder for an unset node index.
+const SENTINEL: usize = !0;
+
+/// An implementation of Monte Carlo Tree Search (MCTS), following the general
+/// framework surveyed by Browne et al. (2012)[^1].
 ///
-/// **Soft rewards.** Nodes use continuous reward values instead of binary win
-/// or loss outcomes.
+/// The search is performed iteratively; the best move found so far is available
+/// via [`Mcts::best_child`], and the full principal variation via
+/// [`Mcts::principal_variation`]. The overall structure was originally derived
+/// from[^2], though the approach has since diverged considerably.
 ///
-/// **Epsilon-greedy exploration.** Chooses a random action with probability ε,
-/// otherwise selects the most visited node based on average reward.
+/// # Features
 ///
-/// **Tree flattening.** The entire tree is stored in a single array, with
-/// parent–child relationships managed by indices.
+/// **Tree flattening.** Nodes are stored in a single contiguous array with
+/// parent–child relationships managed by integer indices[^3].
 ///
-/// **One-reply extensions.** When a node has only one legal move, the search
-/// skips it, directly advancing to the next decision node.
+/// **Negamax.** `backward` inverts the reward sign at each level as it
+/// propagates toward the root[^4], so that every node's value reflects the
+/// moving player's perspective at that ply.
 ///
-/// **Batched evaluation.** Multiple leaf nodes can be expanded for batch
-/// evaluation before their rewards are back-propagated.
+/// **Lazy expansion.** Nodes are expanded only upon their first visit, saving
+/// memory.
 ///
-/// **Lazy expansion.** Nodes are only expanded after being visited at least
-/// once to save memory.
+/// **One-reply extensions.** When expansion yields a single child, the search
+/// extends directly to the next decision node, as no selection can be made[^5].
+///
+/// **Soft rewards.** Nodes store continuous reward values rather than binary
+/// win or loss outcomes.
+///
+/// **Bayesian UCT.** UCB values are computed from a Normal-Inverse-Gamma
+/// conjugate posterior (Tesauro et al., 2010)[^6], providing
+/// credible-interval-based exploration bonuses.
+///
+/// **MC-RAVE selection.** `select_node` weights moves by a blend of local and
+/// global statistics using the MC-RAVE heuristic (Gelly and Silver, 2011)[^7].
+///
+/// **Secure child selection.** `best_child` selects the final move using the
+/// lower confidence bound criterion (Chaslot et al., 2008)[^8], guarding
+/// against high-variance estimates.
 ///
 /// **Early playout termination.** Random playouts are truncated after a fixed
-/// number of moves, reducing memory pressure while either improving playing
-/// strength or remaining a non-regression.
+/// number of moves (Lorentz, 2016)[^9], reducing memory pressure while either
+/// improving playing strength or remaining a non-regression.
 ///
-/// **Garbage collection.** When invoked, prunes nodes with visits below a
-/// threshold.
+/// **Batched evaluation.** Multiple leaf nodes can be expanded and evaluated
+/// before their rewards are back-propagated.
 ///
-/// The search is performed iteratively, and the best move found so far can be
-/// queried after each iteration with [`Mcts::best_child`]. The entire principal
-/// variation is available through [`Mcts::principal_variation`].
+/// **Garbage collection.** When invoked, `prune` severs subtrees with visits
+/// below a threshold (Powley et al., 2017)[^10].
 ///
-/// # References
+/// [^1]: C.B. Browne et al. A Survey of Monte Carlo Tree Search Methods.
+///        *IEEE Trans. Comput. Intell. AI Games*, 2012.
+///        <https://doi.org/10.1109/TCIAIG.2012.2186810>
 ///
-/// 1. <https://github.com/lightvector/KataGo/blob/master/docs/GraphSearch.md>
-/// 2. <https://modelassist.epixanalytics.com/space/EA/26575264>
-/// 3. <https://web.stanford.edu/~bvr/pubs/TS_Tutorial.pdf#page=45>
-/// 4. <https://gist.github.com/rphln/fbbab3e0a432b95ec93d1e29e16acb03>
-/// 5. <https://repository.falmouth.ac.uk/2782/1/MemoryLimiting.pdf>
+/// [^2]: <https://github.com/lightvector/KataGo/blob/master/docs/GraphSearch.md>
+///
+/// [^3]: <https://www.cs.cornell.edu/~asampson/blog/flattening.html>
+///
+/// [^4]: <https://www.chessprogramming.org/Negamax>
+///
+/// [^5]: <https://www.chessprogramming.org/One_Reply_Extensions>
+///
+/// [^6]: G. Tesauro, V.T. Rajan, and R. Segal. Bayesian Inference in
+///        Monte-Carlo Tree Search. *UAI*, 2010.
+///        <https://dl.acm.org/doi/10.5555/3023549.3023618>
+///
+/// [^7]: S. Gelly and D. Silver. Monte-Carlo Tree Search and Rapid Action
+///        Value Estimation in Computer Go. *Artificial Intelligence*, 2011.
+///        <https://doi.org/10.1016/j.artint.2011.03.007>
+///
+/// [^8]: G.M.J-B. Chaslot et al. Progressive Strategies for Monte-Carlo Tree
+///        Search. *New Mathematics and Natural Computation*, 2008.
+///        <https://doi.org/10.1142/S1793005708001094>
+///
+/// [^9]: R.J. Lorentz. Early Playout Termination in MCTS. *Theoretical
+///        Computer Science*, 2016.
+///        <https://doi.org/10.1016/j.tcs.2016.06.026>
+///
+/// [^10]: E.J. Powley, P.I. Cowling, and D. Whitehouse. Memory Bounded Monte
+///         Carlo Tree Search. *AIIDE*, 2017.
+///         <https://doi.org/10.1609/aiide.v13i1.12932>
 #[derive(Clone, Debug)]
 pub struct Mcts {
-    /// Flattened tree representation.
-    ///
-    /// See <https://www.cs.cornell.edu/~asampson/blog/flattening.html>.
+    /// Flattened tree representation; see [3].
     pub nodes: Vec<Node>,
     /// Per-move statistics, shared across the tree, with move interning.
     pub moves: IndexMap<Move, History, FxBuildHasher>,
-    /// Exploration rate for ε-greedy selection.
-    pub exploration_rate: f64,
-    /// Number of moves to make in the playout phase; see [1].
-    ///
-    /// [1]: https://www.sciencedirect.com/science/article/pii/S0304397516302717
+    /// Priors for the normal-inverse-gamma distribution.
+    pub priors: NormalInverseGammaPriors,
+    /// Number of moves to make in the playout phase; see Lorentz (2016) [9].
     pub termination_moves: u32,
 }
 
 /// Statistics for a single ply in the game tree.
 #[derive(Clone, Debug)]
 pub struct Node {
+    /// Reward statistics.
+    pub stats: NormalInverseGamma,
     /// Move used to reach this node.
     pub mov: usize,
-    /// Number of visits.
-    pub visits: u32,
-    /// Estimated reward.
-    pub value: f64,
     /// Parent index.
     pub parent: usize,
     /// First child index (inclusive).
@@ -82,22 +121,23 @@ pub struct Node {
 }
 
 /// Aggregated statistics for a move.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub struct History {
-    /// Number of visits.
-    pub visits: u32,
-    /// Estimated reward.
-    pub value: f64,
+    /// Reward statistics.
+    pub stats: NormalInverseGamma,
 }
-
-/// Placeholder for an unset node index.
-const SENTINEL: usize = !0;
 
 impl Node {
     /// Creates a new node with default statistics.
     #[must_use]
-    const fn new(parent: usize, mov: usize) -> Node {
-        Node { mov, visits: 0, value: 0., parent, head: SENTINEL, last: SENTINEL }
+    const fn new(parent: usize, mov: usize, priors: &NormalInverseGammaPriors) -> Node {
+        Node {
+            mov,
+            parent,
+            head: SENTINEL,
+            last: SENTINEL,
+            stats: NormalInverseGamma::new(priors),
+        }
     }
 
     /// Returns whether this node is the root node.
@@ -111,46 +151,23 @@ impl Node {
     pub const fn is_leaf(&self) -> bool {
         self.head == self.last
     }
+
+    #[must_use]
+    pub const fn visits(&self) -> u32 {
+        self.stats.visits
+    }
+
+    #[must_use]
+    pub const fn value(&self) -> f64 {
+        self.stats.mean
+    }
 }
 
 impl History {
-    /// Incorporates a batch of samples with the given mean into the history.
-    pub fn update_batch(&mut self, mean: f64, num_samples: u32) {
-        if num_samples == 0 {
-            return;
-        }
-
-        let n = f64::from(self.visits);
-        let k = f64::from(num_samples);
-
-        self.value += (k / (n + k)) * (mean - self.value);
-        self.visits += num_samples;
-    }
-
-    /// Removes a batch of samples with the given mean from the history.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `num_samples` exceeds `visits`.
-    pub fn remove_batch(&mut self, mean: f64, num_samples: u32) {
-        if num_samples == 0 {
-            return;
-        }
-
-        assert!(num_samples <= self.visits, "cannot remove more samples than present");
-
-        if num_samples == self.visits {
-            self.visits = 0;
-            self.value = 0.;
-
-            return;
-        }
-
-        let n = f64::from(self.visits);
-        let k = f64::from(num_samples);
-
-        self.value -= (k / (n - k)) * (mean - self.value);
-        self.visits -= num_samples;
+    /// Creates a new entry with default statistics.
+    #[must_use]
+    pub const fn new(priors: &NormalInverseGammaPriors) -> History {
+        History { stats: NormalInverseGamma::new(priors) }
     }
 }
 
@@ -161,25 +178,27 @@ impl Mcts {
     /// tree.
     #[must_use]
     pub fn new(root_move: Move) -> Mcts {
+        // Using default values; they need to be fine-tuned.
+        let priors =
+            NormalInverseGammaPriors { mean: 0.0, beta: 1.0, alpha: 1.0, kappa: 1.0 };
+
         let mut moves = IndexMap::with_hasher(FxBuildHasher);
 
         let entry = moves.entry(root_move);
         let handle = entry.index();
 
-        let _ = entry.or_default();
+        let _ = entry.or_insert_with(|| History::new(&priors));
 
         Mcts {
-            nodes: vec![Node::new(SENTINEL, handle)],
+            nodes: vec![Node::new(SENTINEL, handle, &priors)],
             moves,
-            exploration_rate: 0.2,
+            priors,
             // Going from 0 to 2 is a gainer; going from 2 to 16 is a non-regression,
             // but with substantial memory savings.
             //
-            // Surprisingly, this coincides with the results from [1]: in practice, this
-            // is ≈ 8 real moves in our game, which was also the optimal number of moves
-            // in their experiments.
-            //
-            // [1]: https://www.sciencedirect.com/science/article/pii/S0304397516302717
+            // Surprisingly, this coincides with the results from Lorentz (2016) [9]: in
+            // practice, this is ≈ 8 real moves in our game, which was also the optimal
+            // number of moves in their experiments.
             termination_moves: 16,
         }
     }
@@ -191,13 +210,30 @@ impl Mcts {
         self.nodes.len()
     }
 
-    /// Returns the most-visited child of `node`, or `None` if `root` is a leaf.
+    /// Returns the best child of `node` by the secure child criterion, or
+    /// `None` if `node` is a leaf.
+    ///
+    /// Implements secure child selection (Chaslot et al., 2008) [8]: selects
+    /// the child with the highest lower confidence bound `ucb(-z)`, where `z`
+    /// is calibrated to the parent visit count. This conservative criterion
+    /// avoids committing to a high-variance child whose mean may reflect
+    /// sampling noise.
     #[must_use]
     pub fn best_child(&self, node: usize) -> Option<usize> {
-        let head = self.nodes[node].head;
-        let last = self.nodes[node].last;
+        let parent = &self.nodes[node];
 
-        (head..last).into_iter().max_by_key(|&child| self.nodes[child].visits)
+        let head = parent.head;
+        let last = parent.last;
+
+        let t = f64::from(parent.stats.visits);
+        let z = f64::sqrt(2. * f64::ln(t));
+
+        (head..last).into_iter().max_by(|&left, &right| {
+            let left = self.nodes[left].stats.ucb(-z, &self.priors);
+            let right = self.nodes[right].stats.ucb(-z, &self.priors);
+
+            f64::total_cmp(&left, &right)
+        })
     }
 
     /// Returns an iterator over the principal variation rooted at `node`.
@@ -209,8 +245,8 @@ impl Mcts {
     /// leaf node to explore. Expands nodes as needed and updates the game
     /// state along the selected path.
     ///
-    /// This method allows for batched evaluation and back-propagation of the
-    /// batched evaluations.
+    /// Returning the leaf index without immediately back-propagating supports
+    /// batched evaluation across multiple calls.
     ///
     /// # Panics
     ///
@@ -221,7 +257,7 @@ impl Mcts {
         game: &mut Game,
         rng: &mut impl Rng,
     ) -> usize {
-        if self.nodes[node].visits == 0 || game.is_over() {
+        if self.nodes[node].stats.visits == 0 || game.is_over() {
             return node;
         }
 
@@ -241,11 +277,9 @@ impl Mcts {
     ///
     /// Extends the search upon reaching single-child nodes (i.e., states with
     /// forced moves), as there is no decision to be made and evaluating the
-    /// next state is equivalent. See [1].
+    /// next state is equivalent; see [5].
     ///
     /// Children are shuffled to reduce selection bias.
-    ///
-    /// [1]: <https://www.chessprogramming.org/One_Reply_Extensions>
     ///
     /// # Panics
     ///
@@ -259,9 +293,9 @@ impl Mcts {
             let entry = self.moves.entry(mov);
             let handle = entry.index();
 
-            let _ = entry.or_default();
+            let _ = entry.or_insert_with(|| History::new(&self.priors));
 
-            self.nodes.push(Node::new(node, handle));
+            self.nodes.push(Node::new(node, handle, &self.priors));
         }
 
         let last = self.nodes.len();
@@ -275,19 +309,19 @@ impl Mcts {
         if last - head == 1 {
             let [parent, child] = self.nodes.get_disjoint_mut([node, head]).unwrap();
 
-            child.visits = parent.visits;
-            child.value = -parent.value;
-
-            self.moves[child.mov].update_batch(child.value, child.visits);
+            child.stats = -parent.stats;
+            self.moves[child.mov].stats.merge(&child.stats, &self.priors);
         }
     }
 
-    /// Selects a child node using the epsilon-greedy policy.
+    /// Selects a child node using the MC-RAVE tree policy of Gelly and Silver
+    /// (2011) [7], instantiated with the Bayesian UCB estimates of Tesauro et
+    /// al. (2010) [6].
     ///
     /// # Panics
     ///
     /// Panics if `parent` is a leaf.
-    fn select_node(&self, parent: usize, rng: &mut impl Rng) -> usize {
+    fn select_node(&self, parent: usize, _rng: &mut impl Rng) -> usize {
         let head = self.nodes[parent].head;
         let last = self.nodes[parent].last;
 
@@ -297,21 +331,24 @@ impl Mcts {
             return head;
         }
 
-        if rng.random_bool(self.exploration_rate) {
-            return rng.random_range(head..last);
-        }
-
         let mut best_index = SENTINEL;
         let mut best_value = f64::NEG_INFINITY;
+
+        let t = f64::from(self.nodes[parent].stats.visits);
+        let z = f64::sqrt(2. * f64::ln(t));
 
         for index in head..last {
             let node = &self.nodes[index];
             let history = &self.moves[node.mov];
 
-            let n = f64::from(node.visits);
-            let beta = 1. / (1. + n);
+            let n = f64::from(node.stats.visits);
+            let m = f64::from(history.stats.visits);
 
-            let value = node.value + beta * (history.value - node.value);
+            // Minimum MSE schedule; see Section 4.6 in Gelly and Silver (2011) [7].
+            let beta = m / (m + n + 0.05 * m * n + f64::EPSILON);
+
+            let value = (1. - beta) * node.stats.ucb(z, &self.priors)
+                + beta * history.stats.ucb(z, &self.priors);
             if value > best_value {
                 best_index = index;
                 best_value = value;
@@ -350,17 +387,14 @@ impl Mcts {
             return;
         }
 
-        // See <https://www.chessprogramming.org/Negamax>.
+        // See [4].
         let value = -value;
 
         let entry = &mut self.nodes[node];
+        entry.stats.update(value, &self.priors);
+
         let history = &mut self.moves[entry.mov];
-
-        entry.value += (value - entry.value) / f64::from(entry.visits + 1);
-        entry.visits += 1;
-
-        history.value += (value - history.value) / f64::from(history.visits + 1);
-        history.visits += 1;
+        history.stats.update(value, &self.priors);
 
         let parent = entry.parent;
         self.backward(parent, value);
@@ -429,9 +463,9 @@ impl Mcts {
     /// Searches for the best move, adaptively managing the time budget.
     ///
     /// Allocates a total budget of `T = clock/20 + increment/2`. At each step,
-    /// given remaining budget `t`, runs two searches with allocations `t/6` and
-    /// `t/3`. Stops early if both searches agree on the best move, otherwise
-    /// continues recursively until `t` is exhausted.
+    /// given remaining budget `t`, runs two searches each with allocation
+    /// `t/4`. Stops early if both searches agree on the best move, otherwise
+    /// continues recursively on the remaining budget until `t` is exhausted.
     ///
     /// # Returns
     ///
@@ -476,7 +510,8 @@ impl Mcts {
     }
 
     /// Severs the descendants of each node for which `should_prune` returns
-    /// `true`, leaving the node itself as a leaf.
+    /// `true`, leaving the node itself as a leaf; see Powley et al. (2017)
+    /// [10].
     ///
     /// Descendants of an already-severed node are discarded without being
     /// visited.
@@ -499,7 +534,7 @@ impl Mcts {
     }
 
     /// Combined mark-and-sweep and re-rooting primitive that retains the
-    /// subtree rooted at `root` and pruning it according to `should_prune`.
+    /// subtree rooted at `root` and prunes it according to `should_prune`.
     ///
     /// Severs the descendants of each node for which `should_prune` returns
     /// `true`, leaving the node itself as a leaf. Descendants of an already-
@@ -541,8 +576,7 @@ impl Mcts {
             // Recursively remove the descendants of anything already reclaimed or
             // severed.
             if map[parent] == SENTINEL || self.nodes[parent].head == SENTINEL {
-                self.moves[node.mov].remove_batch(node.value, node.visits);
-
+                self.moves[node.mov].stats.remove(&node.stats, &self.priors);
                 continue;
             }
 

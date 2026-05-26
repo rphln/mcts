@@ -318,7 +318,7 @@ fn play_game(mut game: Game, rng: &mut impl Rng) -> Outcome {
     while !game.is_over() {
         let best = mcts
             .search_while(0, &game, rng, |mcts, _node, _game| {
-                mcts.nodes[0].visits < 400_000
+                mcts.nodes[0].visits() < 400_000
             })
             .expect("`root` should have children");
 
