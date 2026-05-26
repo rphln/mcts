@@ -27,8 +27,12 @@ use crate::game::{Game, Move};
 /// **Batched evaluation.** Multiple leaf nodes can be expanded for batch
 /// evaluation before their rewards are back-propagated.
 ///
-/// **Delayed expansion.** Nodes are only expanded after reaching a minimum
-/// number of visits. Disabled by default.
+/// **Lazy expansion.** Nodes are only expanded after being visited at least
+/// once to save memory.
+///
+/// **Early playout termination.** Random playouts are truncated after a fixed
+/// number of moves, reducing memory pressure while either improving playing
+/// strength or remaining a non-regression.
 ///
 /// **Garbage collection.** When invoked, prunes nodes with visits below a
 /// threshold.
@@ -52,12 +56,12 @@ pub struct Mcts {
     pub nodes: Vec<Node>,
     /// Per-move statistics, shared across the tree, with move interning.
     pub moves: IndexMap<Move, History, FxBuildHasher>,
-    /// Visit threshold for node expansion.
-    ///
-    /// See <https://stackoverflow.com/a/35666246>.
-    pub visits_to_expand: u32,
     /// Exploration rate for ε-greedy selection.
     pub exploration_rate: f64,
+    /// Number of moves to make in the playout phase; see [1].
+    ///
+    /// [1]: https://www.sciencedirect.com/science/article/pii/S0304397516302717
+    pub termination_moves: u32,
 }
 
 /// Statistics for a single ply in the game tree.
@@ -167,8 +171,16 @@ impl Mcts {
         Mcts {
             nodes: vec![Node::new(SENTINEL, handle)],
             moves,
-            visits_to_expand: 1,
             exploration_rate: 0.2,
+            // Going from 0 to 2 is a gainer; going from 2 to 16 is a non-regression,
+            // but with substantial memory savings.
+            //
+            // Surprisingly, this coincides with the results from [1]: in practice, this
+            // is ≈ 8 real moves in our game, which was also the optimal number of moves
+            // in their experiments.
+            //
+            // [1]: https://www.sciencedirect.com/science/article/pii/S0304397516302717
+            termination_moves: 16,
         }
     }
 
@@ -209,8 +221,7 @@ impl Mcts {
         game: &mut Game,
         rng: &mut impl Rng,
     ) -> usize {
-        let skip_expansion = self.nodes[node].visits < self.visits_to_expand;
-        if skip_expansion || game.is_over() {
+        if self.nodes[node].visits == 0 || game.is_over() {
             return node;
         }
 
@@ -310,7 +321,7 @@ impl Mcts {
         best_index
     }
 
-    /// See <https://www.sciencedirect.com/science/article/pii/S0304397516302717>.
+    /// Performs a random playout.
     ///
     /// # Panics
     ///
@@ -318,7 +329,7 @@ impl Mcts {
     pub fn default_policy(&self, game: &mut Game, rng: &mut impl Rng) -> f64 {
         let color = game.color;
 
-        for _ in 0..2 {
+        for _ in 0..self.termination_moves {
             if game.is_over() {
                 break;
             }
