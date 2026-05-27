@@ -413,6 +413,10 @@ impl Mcts {
         rng: &mut impl Rng,
         mut predicate: impl FnMut(&Mcts, &Node, &Game) -> bool,
     ) -> Option<usize> {
+        if !predicate(self, &self.nodes[node], game) {
+            return self.best_child(node);
+        }
+
         loop {
             let mut game = game.clone();
             let next = self.select_and_expand(node, &mut game, rng);
