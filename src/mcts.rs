@@ -537,6 +537,29 @@ impl Mcts {
         self.compact(node, |_node| false);
     }
 
+    /// Discards everything outside the subtree reached by `mov`, making the
+    /// corresponding child the new root of the tree, accessible at index `0`
+    /// after the call.
+    ///
+    /// Returns `None` if the current root has no child corresponding to `mov`.
+    ///
+    /// This method invalidates all existing indices into the tree.
+    #[must_use]
+    pub fn reroot_to_move(mut self, mov: Move) -> Option<Mcts> {
+        let entry = self.moves.entry(mov);
+        let key = entry.index();
+
+        let _ = entry.or_insert_with(|| History::new(&self.priors));
+
+        let head = self.nodes[0].head;
+        let last = self.nodes[0].last;
+
+        let child = (head..last).find(|&child| self.nodes[child].mov == key)?;
+        self.reroot(child);
+
+        Some(self)
+    }
+
     /// Combined mark-and-sweep and re-rooting primitive that retains the
     /// subtree rooted at `root` and prunes it according to `should_prune`.
     ///
@@ -580,7 +603,6 @@ impl Mcts {
             // Recursively remove the descendants of anything already reclaimed or
             // severed.
             if map[parent] == SENTINEL || self.nodes[parent].head == SENTINEL {
-                self.moves[node.mov].stats.remove(&node.stats, &self.priors);
                 continue;
             }
 
@@ -595,6 +617,13 @@ impl Mcts {
 
         // endregion
         // region: Sweep phase.
+
+        // Clean-up the history entries.
+        for (node, &dst) in self.nodes.iter().zip(&map) {
+            if dst == SENTINEL {
+                self.moves[node.mov].stats.remove(&node.stats, &self.priors);
+            }
+        }
 
         // Compact survivors and rewrite their pointers.
         for src in root..len {

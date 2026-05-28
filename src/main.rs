@@ -2,7 +2,7 @@ use std::io::{self, BufWriter, Write};
 
 use rand::prelude::*;
 use swift_swallow::{rules::rules, setup};
-use swift_swallow_rpc::{Handshake, Request, Search};
+use swift_swallow_rpc::{Handshake, Request};
 use swift_swallow_tree_search::{
     DefaultRng,
     game::{Color, Game, Move},
@@ -14,6 +14,9 @@ fn main() -> anyhow::Result<()> {
 
     let shuffle = false;
     let max_ply = None;
+
+    let mut rng = DefaultRng::seed_from_u64(42);
+    let mut mcts = Mcts::new(Move::None { team: Color::Black });
 
     let mut game = {
         let rules = rules();
@@ -38,6 +41,7 @@ fn main() -> anyhow::Result<()> {
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Reset(args) => {
+                mcts = Mcts::new(Move::None { team: Color::Black });
                 game = {
                     let rules = rules();
                     let world = setup(args.seed, args.shuffle, &rules);
@@ -50,13 +54,22 @@ fn main() -> anyhow::Result<()> {
             }
             Request::Play(args) => {
                 game.play(args.mov);
+                mcts = mcts
+                    .reroot_to_move(args.mov)
+                    .unwrap_or_else(|| Mcts::new(args.mov));
 
                 let res = game.result();
                 serde_json::to_writer(&mut tx, &res)?;
             }
             Request::Search(args) => {
-                let res = search(&mut game, &args);
-                serde_json::to_writer(&mut tx, &res)?;
+                let best = mcts
+                    .search(0, &game, &mut rng, args.time, args.iters, args.nodes)
+                    .unwrap();
+
+                let node = &mcts.nodes[best];
+                let (&mov, _history) = mcts.moves.get_index(node.mov).unwrap();
+
+                serde_json::to_writer(&mut tx, &mov)?;
             }
         }
 
@@ -65,35 +78,4 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Performs a search from the current game state and returns the selected move.
-///
-/// # Panics
-///
-/// Panics if no legal moves are available in the current game state.
-#[must_use]
-pub fn search(game: &mut Game, args: &Search) -> Move {
-    let mut moves = game.moves();
-    let first = moves.next().expect("`moves` should be non-empty");
-
-    // For now, just skip the search for singular moves. Later on, we could ponder
-    // here.
-    if moves.next().is_none() {
-        return first;
-    }
-
-    drop(moves);
-
-    let mut rng = DefaultRng::seed_from_u64(args.seed);
-    let mut mcts = Mcts::new(Move::None { team: Color::Black });
-
-    let best = mcts
-        .search(0, game, &mut rng, args.time, args.iters, args.nodes)
-        .expect("root should have children");
-
-    let node = &mcts.nodes[best];
-    let (&mov, _history) = mcts.moves.get_index(node.mov).unwrap();
-
-    mov
 }
