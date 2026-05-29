@@ -1,3 +1,5 @@
+use std::cmp::max;
+
 use swift_swallow::{Command, Outcome, Rules, TeamKey, World, decide, query_commands};
 
 /// Alias for a game move (re-export of [`Command`]).
@@ -66,23 +68,64 @@ impl Game {
     /// Heuristic score from `color`'s perspective.
     #[must_use]
     pub fn evaluate(&self, color: Color) -> f64 {
-        const W0: f64 = -0.216;
-        const W1: f64 = 0.454;
+        /// Actions must provide at least one “Strike” worth of value as the
+        /// baseline.
+        const P: f64 = 6.0;
 
-        if let Some(Outcome::Draw) = self.result() {
-            return 0.;
+        /// Future action discount factor; i.e, per-tick “likelihood” of an
+        /// action becoming available again. Uncalibrated.
+        const S: f64 = 0.8;
+
+        /// Reward for guaranteed wins.
+        const MATE: f64 = 512.0;
+
+        let mut friends = 0.0;
+        let mut enemies = 0.0;
+
+        let mate = match self.result() {
+            None => 0.0,
+            Some(Outcome::Victory(other)) => {
+                if other == color {
+                    MATE
+                } else {
+                    -MATE
+                }
+            }
+            Some(Outcome::Draw) => {
+                return 0.0;
+            }
+        };
+
+        for character in &self.world.characters {
+            if character.is_defeated() {
+                continue;
+            }
+
+            let utility = f64::from(character.current_health() + character.block);
+
+            if character.team == color {
+                friends += utility;
+            } else {
+                enemies += utility;
+            }
         }
 
-        self.world
-            .characters
-            .iter()
-            .filter(|character| !character.is_defeated())
-            .map(|character| {
-                let health = f64::from(character.current_health());
+        for action in &self.world.actions {
+            let character = &self.world.characters[action.character.0];
+            if character.is_defeated() {
+                continue;
+            }
 
-                let score = W0 + W1 * f64::sqrt(health);
-                if character.team == color { score } else { -score }
-            })
-            .sum()
+            let ready_in = max(0, action.ready_at - self.world.tick);
+            let utility = P * f64::powi(S, ready_in);
+
+            if character.team == color {
+                friends += utility;
+            } else {
+                enemies += utility;
+            }
+        }
+
+        mate + friends - enemies
     }
 }
