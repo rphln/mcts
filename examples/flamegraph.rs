@@ -131,8 +131,8 @@ fn serialize(
     let nodes_pos = pos;
     for node in tree {
         pos += field::<8>(&mut out, node.mov.to_le_bytes())?;
-        pos += field::<4>(&mut out, node.visits().to_le_bytes())?;
-        pos += field::<8>(&mut out, node.value().to_le_bytes())?;
+        pos += field::<4>(&mut out, node.visits.to_le_bytes())?;
+        pos += field::<8>(&mut out, node.value.to_le_bytes())?;
         pos += field::<8>(&mut out, node.parent.to_le_bytes())?;
         pos += field::<8>(&mut out, node.head.to_le_bytes())?;
         pos += field::<8>(&mut out, node.last.to_le_bytes())?;
