@@ -1,15 +1,21 @@
+#![feature(file_buffered)]
+
 use std::{
     array,
-    fmt::Display,
+    fs::File,
+    io::{self, Write},
+    num::ParseIntError,
     panic::catch_unwind,
+    path::{Path, PathBuf},
     sync::{
-        Arc,
-        atomic::{AtomicU32, AtomicUsize, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
     },
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
+use clap::Parser;
 use rand::prelude::*;
 use swift_swallow::{
     Outcome, Rules, Subscribe, World,
@@ -23,8 +29,6 @@ use swift_swallow_tree_search::{
     game::{Color, Game, Move},
     mcts::Mcts,
 };
-
-const NUM_WORKERS: usize = 16;
 
 const TEAMS: [[usize; 4]; 15] = [
     [0, 1, 2, 3],
@@ -45,39 +49,25 @@ const TEAMS: [[usize; 4]; 15] = [
 ];
 
 const POSITIONS: [[Position; 4]; 15] = [
-    // [0, 1, 2, 3] = Paladin, Warrior, Scholar, Sidewinder
     [qr(2, 0), qr(2, -1), qr(4, -1), qr(4, 1)],
-    // [0, 1, 2, 4] = Paladin, Warrior, Scholar, Rogue
     [qr(2, 0), qr(2, -1), qr(4, -1), qr(3, 0)],
-    // [0, 1, 2, 5] = Paladin, Warrior, Scholar, Warlock
     [qr(2, 0), qr(2, -1), qr(4, -1), qr(3, 0)],
-    // [0, 1, 3, 4] = Paladin, Warrior, Sidewinder, Rogue
     [qr(2, 0), qr(2, -1), qr(4, -1), qr(3, 0)],
-    // [0, 1, 3, 5] = Paladin, Warrior, Sidewinder, Warlock
     [qr(2, 0), qr(2, -1), qr(4, -1), qr(3, 0)],
-    // [0, 1, 4, 5] = Paladin, Warrior, Rogue, Warlock
     [qr(2, 0), qr(2, -1), qr(3, 0), qr(3, -1)],
-    // [0, 2, 3, 4] = Paladin, Scholar, Sidewinder, Rogue
     [qr(2, 0), qr(4, -1), qr(4, 1), qr(3, 0)],
-    // [0, 2, 3, 5] = Paladin, Scholar, Sidewinder, Warlock
     [qr(2, 0), qr(4, -1), qr(4, 1), qr(3, 0)],
-    // [0, 2, 4, 5] = Paladin, Scholar, Rogue, Warlock
     [qr(2, 0), qr(4, -1), qr(3, 0), qr(3, -1)],
-    // [0, 3, 4, 5] = Paladin, Sidewinder, Rogue, Warlock
     [qr(2, 0), qr(4, 1), qr(3, 0), qr(3, -1)],
-    // [1, 2, 3, 4] = Warrior, Scholar, Sidewinder, Rogue
     [qr(2, 0), qr(4, -1), qr(4, 1), qr(3, 0)],
-    // [1, 2, 3, 5] = Warrior, Scholar, Sidewinder, Warlock
     [qr(2, 0), qr(4, -1), qr(4, 1), qr(3, 0)],
-    // [1, 2, 4, 5] = Warrior, Scholar, Rogue, Warlock
     [qr(2, 0), qr(4, -1), qr(3, 0), qr(3, -1)],
-    // [1, 3, 4, 5] = Warrior, Sidewinder, Rogue, Warlock
     [qr(2, 0), qr(4, 1), qr(3, 0), qr(3, -1)],
-    // [2, 3, 4, 5] = Scholar, Sidewinder, Rogue, Warlock
     [qr(4, -1), qr(4, 1), qr(3, 0), qr(3, -1)],
 ];
 
-// Ordered to even out the character distributions at each given timestep.
+// Ordered so the character mix stays even over time (an interrupted run is
+// still balanced).
 const PAIRS: [(usize, usize); 90] = [
     (0, 5),
     (1, 14),
@@ -171,121 +161,159 @@ const PAIRS: [(usize, usize); 90] = [
     (14, 1),
 ];
 
-#[derive(Default)]
-struct State {
-    next_match: AtomicUsize,
-    curr_match: AtomicUsize,
-    cross: [[Beta; 6]; 6],
-    intra: [[Beta; 6]; 6],
+/// Self-play balance harness.
+#[derive(Debug, Parser)]
+pub struct Args {
+    /// Number of matches to play; ideally a multiple of 90.
+    #[clap(long, default_value_t = 1080)]
+    pub matches: usize,
+    /// Worker threads.
+    #[clap(long, default_value_t = 16)]
+    pub threads: usize,
+    /// MCTS time budget per move, in milliseconds.
+    #[clap(long, value_parser = parse_millis, required_unless_present_any = ["iters", "nodes"])]
+    pub time: Option<Duration>,
+    /// MCTS iteration budget per move.
+    #[clap(long, required_unless_present_any = ["time", "nodes"])]
+    pub iters: Option<u32>,
+    /// MCTS node budget per move.
+    #[clap(long, required_unless_present_any = ["time", "iters"])]
+    pub nodes: Option<usize>,
+    /// Output CSV, rewritten after every match.
+    #[clap(long, default_value = "matches.csv")]
+    pub out: PathBuf,
+}
+
+fn parse_millis(arg: &str) -> Result<Duration, ParseIntError> {
+    Ok(Duration::from_millis(arg.parse()?))
+}
+
+#[derive(Clone, Copy, Default)]
+struct Record {
+    wins: u32,
+    draws: u32,
+    losses: u32,
+}
+
+struct Shared {
+    args: Args,
+    next: AtomicUsize,
+    done: AtomicUsize,
+    tally: Mutex<[Record; 90]>,
+    start: Instant,
 }
 
 fn main() {
-    let mut rng = DefaultRng::seed_from_u64(42);
+    let args = Args::parse();
+    let threads = args.threads;
 
-    let start = Instant::now();
-    let state = Arc::new(State::default());
+    let shared = Arc::new(Shared {
+        next: AtomicUsize::new(0),
+        done: AtomicUsize::new(0),
+        tally: Mutex::new([Record::default(); 90]),
+        start: Instant::now(),
+        args,
+    });
 
-    for _ in 0..NUM_WORKERS {
-        let mut rng = DefaultRng::from_rng(&mut rng);
-        let state = state.clone();
+    let handles: Vec<_> = (0..threads)
+        .map(|_worker| {
+            let shared = shared.clone();
+            thread::spawn(move || run_worker(&shared))
+        })
+        .collect();
 
-        thread::spawn(move || {
-            let characters = [
-                characters::paladin(),
-                characters::warrior(),
-                characters::scholar(),
-                characters::sidewinder(),
-                characters::rogue(),
-                characters::warlock(),
-            ];
+    for handle in handles {
+        if let Err(_reason) = handle.join() {
+            eprintln!("run compromised: a match panicked");
+            std::process::exit(1);
+        }
+    }
+}
 
-            loop {
-                let n = state.next_match.fetch_add(1, Ordering::SeqCst);
+#[expect(clippy::cast_precision_loss)]
+fn run_worker(shared: &Shared) {
+    let characters = [
+        characters::paladin(),
+        characters::warrior(),
+        characters::scholar(),
+        characters::sidewinder(),
+        characters::rogue(),
+        characters::warlock(),
+    ];
 
-                let (white_chr, black_chr, white_team, black_team) = {
-                    let (white, black) = PAIRS[n % PAIRS.len()];
+    loop {
+        let n = shared.next.fetch_add(1, Ordering::Relaxed);
+        if n >= shared.args.matches {
+            break;
+        }
 
-                    let white_chr = TEAMS[white];
-                    let black_chr = TEAMS[black];
+        let seed = n as u64;
+        let pair = n % PAIRS.len();
 
-                    let white_pos = POSITIONS[white];
-                    let black_pos = POSITIONS[black].map(|p| -p);
+        let (white, black) = PAIRS[pair];
 
-                    let white_team: [CharacterBuilder; 4] = array::from_fn(|idx| {
-                        characters[white_chr[idx]].clone().position(white_pos[idx])
-                    });
-
-                    let black_team: [CharacterBuilder; 4] = array::from_fn(|idx| {
-                        characters[black_chr[idx]].clone().position(black_pos[idx])
-                    });
-
-                    (white_chr, black_chr, white_team, black_team)
-                };
-
-                let seed = rng.next_u64();
-                let outcome = catch_unwind(|| {
-                    let game = build_game(seed, &white_team, &black_team);
-
-                    let mut mcts_rng = DefaultRng::seed_from_u64(seed);
-                    play_game(game, &mut mcts_rng)
-                })
-                .unwrap_or_else(|err| {
-                    panic!("panic: seed={seed} n={n} err={err:?}");
-                });
-
-                let white_won = matches!(outcome, Outcome::Victory(Color::White));
-
-                for w in white_chr {
-                    for b in black_chr {
-                        if white_won {
-                            state.cross[w][b].win();
-                            state.cross[b][w].loss();
-                        } else {
-                            state.cross[w][b].loss();
-                            state.cross[b][w].win();
-                        }
-                    }
-                }
-
-                for i in white_chr {
-                    for j in white_chr {
-                        if white_won {
-                            state.intra[i][j].win();
-                        } else {
-                            state.intra[i][j].loss();
-                        }
-                    }
-                }
-
-                for i in black_chr {
-                    for j in black_chr {
-                        if white_won {
-                            state.intra[i][j].loss();
-                        } else {
-                            state.intra[i][j].win();
-                        }
-                    }
-                }
-
-                let n = state.curr_match.fetch_add(1, Ordering::SeqCst);
-                let elapsed = start.elapsed();
-
-                println!("Elapsed: {elapsed:.2?}");
-                println!("Matches: {n}");
-                println!();
-
-                println!("Adversaries");
-                print_matrix(&characters, &state.cross);
-                println!();
-
-                println!("Teammates");
-                print_matrix(&characters, &state.intra);
-                println!();
-            }
+        let white_team: [CharacterBuilder; 4] = array::from_fn(|idx| {
+            characters[TEAMS[white][idx]].clone().position(POSITIONS[white][idx])
         });
+        let black_team: [CharacterBuilder; 4] = array::from_fn(|idx| {
+            characters[TEAMS[black][idx]].clone().position(-POSITIONS[black][idx])
+        });
+
+        let outcome = catch_unwind(|| {
+            let game = build_game(seed, &white_team, &black_team);
+            let mut rng = DefaultRng::seed_from_u64(seed);
+            play_game(
+                game,
+                &mut rng,
+                shared.args.time,
+                shared.args.iters,
+                shared.args.nodes,
+            )
+        })
+        .unwrap_or_else(|reason| {
+            panic!("match panicked: n={n} seed={seed} white={white} black={black} reason={reason:?}")
+        });
+
+        let mut records = shared.tally.lock().unwrap();
+        match outcome {
+            Outcome::Draw => records[pair].draws += 1,
+            Outcome::Victory(Color::White) => records[pair].wins += 1,
+            Outcome::Victory(Color::Black) => records[pair].losses += 1,
+        }
+
+        write_csv(records.as_ref(), &shared.args.out).expect("write succeeded");
+
+        let done = 1 + shared.done.fetch_add(1, Ordering::Relaxed);
+        let total = shared.args.matches;
+
+        let freq = (done as f64) / shared.start.elapsed().as_secs_f64();
+        let secs = 1. / freq;
+
+        let remaining = total - done;
+        let eta = Duration::from_secs_f64(secs * (remaining as f64));
+
+        let rate_fmt = if freq >= 1. {
+            format!("{freq:.1} samples/sec")
+        } else {
+            format!("{secs:.1} secs/sample")
+        };
+
+        eprintln!("[{done:>5}/{total}] Rate: {rate_fmt} ETA: {eta:.1?}");
+    }
+}
+
+fn write_csv(records: &[Record], path: &Path) -> io::Result<()> {
+    let mut csv = File::create_buffered(path)?;
+
+    writeln!(csv, "wins,draws,losses,white,black")?;
+
+    for ((white, black), Record { wins, draws, losses }) in
+        PAIRS.into_iter().zip(records)
+    {
+        writeln!(csv, "{wins},{draws},{losses},{white},{black}")?;
     }
 
-    thread::park();
+    csv.flush()
 }
 
 fn build_game(
@@ -294,7 +322,6 @@ fn build_game(
     black_team: &[CharacterBuilder],
 ) -> Game {
     let map = Position::spiral(5).map(|p| (p, Tile::Open));
-
     let mut world = World::new(map, seed);
 
     for c in white_team {
@@ -306,85 +333,34 @@ fn build_game(
     }
 
     let rules = Rules::default();
+    rules.on_start(&mut Start, &rules, &mut world);
 
-    let () = rules.on_start(&mut Start, &rules, &mut world);
-
-    Game::new(world, rules, None)
+    Game::new(world, rules, Some(1024))
 }
 
-fn play_game(mut game: Game, rng: &mut impl Rng) -> Outcome {
+fn play_game(
+    mut game: Game,
+    rng: &mut impl Rng,
+    time: Option<Duration>,
+    iters: Option<u32>,
+    nodes: Option<usize>,
+) -> Outcome {
     let mut mcts = Mcts::new(Move::None { team: Color::Black });
 
     while !game.is_over() {
-        let best = mcts
-            .search_while(0, &game, rng, |mcts, _node, _game| {
-                mcts.nodes[0].visits < 400_000
-            })
-            .expect("`root` should have children");
+        let mut moves = game.moves();
+        let mov = if moves.len() == 1 {
+            moves.next().unwrap()
+        } else {
+            let best = mcts.search(0, &game, rng, time, iters, nodes).unwrap();
+            mcts.moves.keys()[mcts.nodes[best].mov]
+        };
 
-        let mov = mcts.moves.keys()[mcts.nodes[best].mov];
+        drop(moves);
+
         game.play(mov);
-
-        mcts.reroot(best);
+        mcts = mcts.reroot_to_move(mov).unwrap_or_else(|| Mcts::new(mov));
     }
 
     game.result().unwrap()
-}
-
-fn print_cell(value: impl Display) {
-    print!(" {value:>12}");
-}
-
-fn print_matrix(roster: &[CharacterBuilder], matrix: &[[Beta; 6]]) {
-    print_cell("");
-
-    for c in roster {
-        print_cell(&c.name);
-    }
-
-    println!();
-
-    for (src, row) in roster.iter().zip(matrix.iter()) {
-        print_cell(&src.name);
-
-        for beta in row {
-            let (mean, std) = beta.mean_std();
-            print_cell(format!("{mean:.2}±{std:.2}"));
-        }
-
-        println!();
-    }
-}
-
-struct Beta {
-    alpha: AtomicU32,
-    beta: AtomicU32,
-}
-
-impl Default for Beta {
-    fn default() -> Self {
-        Self { alpha: AtomicU32::new(1), beta: AtomicU32::new(1) }
-    }
-}
-
-impl Beta {
-    fn win(&self) {
-        self.alpha.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn loss(&self) {
-        self.beta.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn mean_std(&self) -> (f64, f64) {
-        let alpha = f64::from(self.alpha.load(Ordering::SeqCst));
-        let beta = f64::from(self.beta.load(Ordering::SeqCst));
-
-        let mean = alpha / (alpha + beta);
-
-        let var = mean * (1.0 - mean) / (alpha + beta + 1.0);
-        let std = var.sqrt();
-
-        (mean, std)
-    }
 }
