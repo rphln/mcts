@@ -188,7 +188,7 @@ fn parse_millis(arg: &str) -> Result<Duration, ParseIntError> {
     Ok(Duration::from_millis(arg.parse()?))
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Copy, Clone, Default)]
 struct Record {
     wins: u32,
     draws: u32,

@@ -25,7 +25,7 @@ pub struct Game {
 impl Game {
     #[must_use]
     pub fn new(world: World, rules: Rules, max_depth: Option<usize>) -> Game {
-        Self { world, rules, color: Color::White, depth: 0, max_depth }
+        Game { world, rules, color: Color::White, depth: 0, max_depth }
     }
 
     #[must_use]
