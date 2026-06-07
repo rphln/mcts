@@ -370,7 +370,7 @@ impl Mcts {
                 let n = f64::from(node.visits);
                 let m = f64::from(history.visits);
 
-                // See Section 4.6 in Gelly and Silver (2011) [5].
+                // See section 4.6 in Gelly and Silver (2011) [5].
                 let beta = m / (m + n + 0.05 * m * n + f64::EPSILON);
                 node.value + beta * (history.value - node.value)
             };
@@ -682,7 +682,7 @@ impl Mcts {
         // endregion
         // region: Sweep phase.
 
-        // Clean-up the history entries.
+        // Clean up the history entries.
         for (node, &dst) in self.nodes.iter().zip(&map) {
             if dst == SENTINEL {
                 self.moves[node.mov].remove_batch(node.value, node.visits);
