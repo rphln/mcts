@@ -8,7 +8,6 @@ workspace = true
 
 [dependencies]
 swift_swallow.workspace = true
-swift_swallow_rpc.workspace = true
 
 rand.workspace = true
 rand_xoshiro.workspace = true
