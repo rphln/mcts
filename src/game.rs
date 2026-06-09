@@ -1,4 +1,6 @@
-use swift_swallow::{Command, Outcome, Rules, TeamKey, World, decide, query_commands};
+use swift_swallow_core::{
+    Command, Outcome, Rules, TeamKey, World, decide, query_commands,
+};
 
 /// Alias for a game move (re-export of [`Command`]).
 pub type Move = Command;

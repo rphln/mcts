@@ -7,23 +7,10 @@ edition = "2024"
 workspace = true
 
 [dependencies]
-swift_swallow.workspace = true
+swift_swallow_core.workspace = true
 
 rand.workspace = true
 rand_xoshiro.workspace = true
 
 rustc-hash = "2.1.1"
 indexmap = "2.14.0"
-
-anyhow = "1.0.99"
-clap = { version = "4.5.47", features = ["derive"] }
-
-serde.workspace = true
-serde_json.workspace = true
-
-[dev-dependencies]
-criterion = { version = "0.8.2", features = ["html_reports"] }
-
-[[bench]]
-name = "bench"
-harness = false
