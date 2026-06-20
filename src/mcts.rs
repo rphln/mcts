@@ -45,20 +45,15 @@ const SENTINEL: usize = !0;
 /// **MC-RAVE selection.** In the greedy branch, moves are scored by a weighted
 /// blend of local and global statistics (Gelly and Silver, 2011)[^5].
 ///
-/// **Score bounds.** Each node maintains pessimistic and optimistic bounds on
-/// its game-theoretic value; terminal nodes are solved exactly, and
-/// alpha-beta style cuts skip children whose optimistic bound cannot improve
-/// upon the current pessimistic bound (Cazenave and Saffidine, 2010)[^6].
-///
 /// **Early playout termination.** Random playouts are truncated after a fixed
-/// number of moves (Lorentz, 2016)[^7], reducing memory pressure and either
+/// number of moves (Lorentz, 2016)[^6], reducing memory pressure and either
 /// improving playing strength or remaining a non-regression.
 ///
 /// **Batched evaluation.** Multiple leaf nodes can be expanded and evaluated
 /// before their rewards are back-propagated.
 ///
 /// **Garbage collection.** When invoked, `prune` severs subtrees with visits
-/// below a threshold (Powley et al., 2017)[^8].
+/// below a threshold (Powley et al., 2017)[^7].
 ///
 /// [^1]: C.B. Browne et al. A Survey of Monte Carlo Tree Search Methods.
 ///        *IEEE Trans. Comput. Intell. AI Games*, 2012.
@@ -77,15 +72,11 @@ const SENTINEL: usize = !0;
 ///        Value Estimation in Computer Go. *Artificial Intelligence*, 2011.
 ///        <https://doi.org/10.1016/j.artint.2011.03.007>
 ///
-/// [^6]: T. Cazenave and A. Saffidine. Score Bounded Monte-Carlo Tree Search.
-///        *Computers and Games*, 2010.
-///        <https://doi.org/10.1007/978-3-642-17928-0_9>
-///
-/// [^7]: R.J. Lorentz. Early Playout Termination in MCTS. *Theoretical
+/// [^6]: R.J. Lorentz. Early Playout Termination in MCTS. *Theoretical
 ///        Computer Science*, 2016.
 ///        <https://doi.org/10.1016/j.tcs.2016.06.026>
 ///
-/// [^8]: E.J. Powley, P.I. Cowling, and D. Whitehouse. Memory Bounded Monte
+/// [^7]: E.J. Powley, P.I. Cowling, and D. Whitehouse. Memory Bounded Monte
 ///        Carlo Tree Search. *AIIDE*, 2017.
 ///        <https://doi.org/10.1609/aiide.v13i1.12932>
 #[derive(Clone, Debug)]
@@ -96,7 +87,7 @@ pub struct Mcts {
     pub moves: IndexMap<Move, History, FxBuildHasher>,
     /// Exploration rate for ε-greedy selection.
     pub exploration_rate: f64,
-    /// Number of moves to make in the playout phase (Lorentz, 2016) [7].
+    /// Number of moves to make in the playout phase (Lorentz, 2016) [6].
     pub termination_moves: u32,
 }
 
@@ -115,12 +106,6 @@ pub struct Node {
     pub visits: u32,
     /// Estimated reward.
     pub value: f64,
-    /// Pessimistic bound on the game-theoretic value (Cazenave and Saffidine,
-    /// 2010) [6].
-    pub min: f64,
-    /// Optimistic bound on the game-theoretic value (Cazenave and Saffidine,
-    /// 2010) [6].
-    pub max: f64,
 }
 
 /// Aggregated statistics for a move.
@@ -136,16 +121,7 @@ impl Node {
     /// Creates a new node with default statistics.
     #[must_use]
     const fn new(parent: usize, mov: usize) -> Node {
-        Node {
-            mov,
-            parent,
-            head: SENTINEL,
-            last: SENTINEL,
-            visits: 0,
-            value: 0.0,
-            min: f64::NEG_INFINITY,
-            max: f64::INFINITY,
-        }
+        Node { mov, parent, head: SENTINEL, last: SENTINEL, visits: 0, value: 0.0 }
     }
 
     /// Returns whether this node is the root node.
@@ -223,7 +199,7 @@ impl Mcts {
             // Going from 0 to 2 is a gainer; going from 2 to 16 is a non-regression,
             // but with substantial memory savings.
             //
-            // Surprisingly, this coincides with the results from Lorentz (2016) [7]: in
+            // Surprisingly, this coincides with the results from Lorentz (2016) [6]: in
             // practice, this is ≈ 8 real moves in our game, which was also the optimal
             // number of moves in their experiments.
             termination_moves: 16,
@@ -330,10 +306,6 @@ impl Mcts {
     /// In the greedy branch, scores are computed as a weighted blend of local
     /// and global move statistics following Gelly and Silver (2011) [5].
     ///
-    /// Children whose optimistic bound cannot improve upon the current
-    /// pessimistic bound are skipped, and solved nodes are selected by their
-    /// exact value (Cazenave and Saffidine, 2010) [6].
-    ///
     /// # Panics
     ///
     /// Panics if `parent` is a leaf.
@@ -354,26 +326,16 @@ impl Mcts {
         let mut best_index = SENTINEL;
         let mut best_value = f64::NEG_INFINITY;
 
-        let min = -self.nodes[parent].max;
-
         for index in head..last {
             let node = &self.nodes[index];
             let history = &self.moves[node.mov];
 
-            if min > node.max {
-                continue;
-            }
+            let n = f64::from(node.visits);
+            let m = f64::from(history.visits);
 
-            let value = if node.min >= node.max {
-                node.min
-            } else {
-                let n = f64::from(node.visits);
-                let m = f64::from(history.visits);
-
-                // See section 4.6 in Gelly and Silver (2011) [5].
-                let beta = m / (m + n + 0.05 * m * n + f64::EPSILON);
-                node.value + beta * (history.value - node.value)
-            };
+            // See section 4.6 in Gelly and Silver (2011) [5].
+            let beta = m / (m + n + 0.05 * m * n + f64::EPSILON);
+            let value = node.value + beta * (history.value - node.value);
 
             if value > best_value {
                 best_index = index;
@@ -429,33 +391,6 @@ impl Mcts {
         self.backward(parent, value);
     }
 
-    /// Back-propagates score bounds from a node up to the root.
-    ///
-    /// At each level, the bounds are derived from the children using the
-    /// negamax convention, so that each node's bounds reflect the moving
-    /// player's perspective at that ply (Cazenave and Saffidine, 2010) [6].
-    fn backward_bounds(&mut self, node: usize) {
-        if node == SENTINEL {
-            return;
-        }
-
-        let mut min = f64::NEG_INFINITY;
-        let mut max = f64::NEG_INFINITY;
-
-        let head = self.nodes[node].head;
-        let last = self.nodes[node].last;
-
-        for child in &self.nodes[head..last] {
-            min = f64::max(min, child.min);
-            max = f64::max(max, child.max);
-        }
-
-        self.nodes[node].max = -min;
-        self.nodes[node].min = -max;
-
-        self.backward_bounds(self.nodes[node].parent);
-    }
-
     /// Searches from `node` until `predicate` is false.
     ///
     /// # Panics
@@ -477,18 +412,8 @@ impl Mcts {
             let mut game = game.clone();
             let next = self.select_and_expand(node, &mut game, rng);
 
-            if game.is_over() {
-                let reward = game.evaluate(game.color);
-                self.backward(next, reward);
-
-                self.nodes[next].min = -reward;
-                self.nodes[next].max = -reward;
-
-                self.backward_bounds(self.nodes[next].parent);
-            } else {
-                let reward = self.default_policy(&mut game, rng);
-                self.backward(next, reward);
-            }
+            let reward = self.default_policy(&mut game, rng);
+            self.backward(next, reward);
 
             if !predicate(self, &self.nodes[next], &game) {
                 break;
@@ -580,7 +505,7 @@ impl Mcts {
     }
 
     /// Severs the descendants of each node for which `should_prune` returns
-    /// `true`, leaving the node itself as a leaf (Powley et al., 2017) [8].
+    /// `true`, leaving the node itself as a leaf (Powley et al., 2017) [7].
     ///
     /// Descendants of an already-severed node are discarded without being
     /// visited.
