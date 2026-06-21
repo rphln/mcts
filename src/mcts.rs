@@ -195,7 +195,7 @@ impl Mcts {
         Mcts {
             nodes: vec![Node::new(SENTINEL, handle)],
             moves,
-            exploration_rate: 0.2,
+            exploration_rate: 0.1,
             // Going from 0 to 2 is a gainer; going from 2 to 16 is a non-regression,
             // but with substantial memory savings.
             //
