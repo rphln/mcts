@@ -1,3 +1,5 @@
+use std::cmp::max;
+
 use swift_swallow_core::{
     Command, Outcome, Rules, TeamKey, World, decide, query_commands,
 };
@@ -86,7 +88,7 @@ impl Game {
             None => 0.0,
         };
 
-        let utility: f64 = self
+        let characters: f64 = self
             .world
             .characters
             .iter()
@@ -99,6 +101,23 @@ impl Game {
             })
             .sum();
 
-        mate + utility
+        let actions: f64 = self
+            .world
+            .actions
+            .iter()
+            .map(|action| {
+                let character = &self.world.characters[action.character];
+                if character.is_defeated() {
+                    return 0.;
+                }
+
+                let ready_in = max(0, action.ready_at - self.world.tick);
+                let utility = 0.1 * f64::powi(0.9, ready_in);
+
+                if color == character.team { utility } else { -utility }
+            })
+            .sum();
+
+        mate + characters + actions
     }
 }
