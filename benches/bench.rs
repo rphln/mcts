@@ -4,7 +4,7 @@ extern crate test;
 use std::hint::black_box;
 
 use rand::prelude::*;
-use swift_swallow_core::{rules::rules, setup};
+use swift_swallow_core::{rules, setup};
 use swift_swallow_tree_search::{
     game::{Color, Game, Move},
     mcts::Mcts,
