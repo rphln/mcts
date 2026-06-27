@@ -33,8 +33,7 @@ impl Game {
     #[must_use]
     pub fn moves(&self) -> impl ExactSizeIterator<Item = Move> {
         let moves = if self.world.active_team() == self.color {
-            let query = query_commands(&self.rules, &self.world);
-            query.includes
+            query_commands(&self.rules, &self.world)
         } else {
             vec![Command::None { team: self.color }]
         };
