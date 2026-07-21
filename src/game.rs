@@ -1,109 +1,32 @@
-use swift_swallow_core::{
-    Command, Outcome, Rules, TeamKey, World, decide, query_commands,
-};
+use std::hash::Hash;
 
-/// Alias for a game move (re-export of [`Command`]).
-pub type Move = Command;
-
-/// Alias for a side to move (re-export of [`TeamKey`]).
-pub type Color = TeamKey;
-
-/// A game wrapper around `swift_swallow` that enforces strict turn alternation,
-/// generates legal moves, and tracks plies.
+/// A two-player game that the search can drive.
 ///
-/// Each `play` call increments the ply count, even if the move is a no-op due
-/// to turn enforcement.
-#[derive(Clone)]
-pub struct Game {
-    pub world: World,
-    pub rules: Rules,
-    pub color: Color,
-    pub depth: usize,
-    pub max_depth: Option<usize>,
-}
+/// Implementors expose legal-move generation, move application, terminal
+/// detection, and a heuristic evaluation. The search treats the state as
+/// opaque, interning only the [`GameState::Move`] values it needs to track.
+pub trait GameState: Clone {
+    /// A single move.
+    type Move: Eq + Hash;
 
-impl Game {
-    #[must_use]
-    pub fn new(world: World, rules: Rules, max_depth: Option<usize>) -> Game {
-        Game { world, rules, color: Color::White, depth: 0, max_depth }
-    }
+    /// A side to move.
+    type Color;
 
-    #[must_use]
-    pub fn moves(&self) -> impl ExactSizeIterator<Item = Move> {
-        let moves = if self.world.active_team() == self.color {
-            query_commands(&self.rules, &self.world)
-        } else {
-            vec![Command::None { team: self.color }]
-        };
+    /// Enumerates the legal moves in the current state.
+    fn moves(&self) -> impl Iterator<Item = Self::Move>;
 
-        moves.into_iter()
-    }
+    /// Applies `mov`, advancing the state by one ply.
+    fn play(&mut self, mov: &Self::Move);
 
-    pub fn play(&mut self, mov: Move) {
-        self.color = !self.color;
-        self.depth += 1;
+    /// Returns whether the game has reached a terminal state.
+    fn is_over(&self) -> bool;
 
-        if let Move::None { .. } = mov {
-            return;
-        }
+    /// Returns the side to move.
+    fn color(&self) -> Self::Color;
 
-        decide(mov, &self.rules, &mut self.world);
-    }
-
-    #[must_use]
-    pub fn result(&self) -> Option<Outcome> {
-        if self.max_depth.is_some_and(|max| self.depth >= max) {
-            Some(Outcome::Draw)
-        } else {
-            self.world.result()
-        }
-    }
-
-    #[must_use]
-    pub fn is_over(&self) -> bool {
-        self.result().is_some()
-    }
+    /// Returns the number of plies played so far.
+    fn depth(&self) -> usize;
 
     /// Heuristic score from `color`'s perspective.
-    #[must_use]
-    pub fn evaluate(&self, color: Color) -> f64 {
-        /// Decisive state value.
-        const Z: f64 = 256.0;
-
-        /// Each character provides at least one “Strike” worth of value.
-        const S: f64 = 6.0;
-
-        let mate = match self.result() {
-            Some(Outcome::Draw) => return 0.0,
-            Some(Outcome::Victory(other)) => {
-                if color == other {
-                    Z
-                } else {
-                    -Z
-                }
-            }
-            None => 0.0,
-        };
-
-        let characters: f64 = self
-            .world
-            .characters
-            .iter()
-            .filter(|character| !character.is_defeated())
-            .map(|character| {
-                let health = f64::from(character.current_health() + character.block);
-                let utility = score(S) + score(health);
-
-                if color == character.team { utility } else { -utility }
-            })
-            .sum();
-
-        mate + characters
-    }
-}
-
-fn score(x: f64) -> f64 {
-    const K: f64 = 64.;
-
-    f64::sqrt(x * (x + K) / (2. * K))
+    fn evaluate(&self, color: Self::Color) -> f64;
 }

@@ -7,10 +7,11 @@ use indexmap::IndexMap;
 use rand::prelude::*;
 use rustc_hash::FxBuildHasher;
 
-use crate::game::{Game, Move};
-
-/// Placeholder for an unset node index.
-const SENTINEL: usize = !0;
+use crate::{
+    game::GameState,
+    history::History,
+    node::{Node, SENTINEL},
+};
 
 /// An implementation of Monte Carlo Tree Search (MCTS), following the general
 /// framework surveyed by Browne et al. (2012)[^1].
@@ -80,111 +81,37 @@ const SENTINEL: usize = !0;
 ///        Carlo Tree Search. *AIIDE*, 2017.
 ///        <https://doi.org/10.1609/aiide.v13i1.12932>
 #[derive(Clone, Debug)]
-pub struct Mcts {
+pub struct Mcts<G: GameState> {
+    /// Tunable search parameters.
+    pub options: MctsOptions,
+    /// Per-move statistics, shared across the tree, with move interning.
+    pub moves: IndexMap<G::Move, History, FxBuildHasher>,
     /// Flattened tree representation (Sampson, 2023) [2].
     pub nodes: Vec<Node>,
-    /// Per-move statistics, shared across the tree, with move interning.
-    pub moves: IndexMap<Move, History, FxBuildHasher>,
+}
+
+/// Tunable parameters for [`Mcts`].
+#[derive(Copy, Clone, Debug)]
+pub struct MctsOptions {
     /// Exploration rate for ε-greedy selection.
     pub exploration_rate: f64,
     /// Number of moves to make in the playout phase (Lorentz, 2016) [6].
     pub termination_moves: u32,
 }
 
-/// Statistics for a single ply in the game tree.
-#[derive(Clone, Debug)]
-pub struct Node {
-    /// Move used to reach this node.
-    pub mov: usize,
-    /// Parent index.
-    pub parent: usize,
-    /// First child index (inclusive).
-    pub head: usize,
-    /// Last child index (exclusive).
-    pub last: usize,
-    /// Number of visits.
-    pub visits: u32,
-    /// Estimated reward.
-    pub value: f64,
-}
-
-/// Aggregated statistics for a move.
-#[derive(Clone, Default, Debug)]
-pub struct History {
-    /// Number of visits.
-    pub visits: u32,
-    /// Estimated reward.
-    pub value: f64,
-}
-
-impl Node {
-    /// Creates a new node with default statistics.
-    #[must_use]
-    const fn new(parent: usize, mov: usize) -> Node {
-        Node { mov, parent, head: SENTINEL, last: SENTINEL, visits: 0, value: 0.0 }
-    }
-
-    /// Returns whether this node is the root node.
-    #[must_use]
-    pub const fn is_root(&self) -> bool {
-        self.parent == SENTINEL
-    }
-
-    /// Returns whether this node is a leaf.
-    #[must_use]
-    pub const fn is_leaf(&self) -> bool {
-        self.head == self.last
+impl Default for MctsOptions {
+    fn default() -> MctsOptions {
+        MctsOptions { exploration_rate: 0.1, termination_moves: 8 }
     }
 }
 
-impl History {
-    /// Incorporates a batch of samples with the given mean into the history.
-    fn insert_batch(&mut self, mean: f64, num_samples: u32) {
-        if num_samples == 0 {
-            return;
-        }
-
-        let n = f64::from(self.visits);
-        let k = f64::from(num_samples);
-
-        self.value += (k / (n + k)) * (mean - self.value);
-        self.visits += num_samples;
-    }
-
-    /// Removes a batch of samples with the given mean from the history.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `num_samples` exceeds `visits`.
-    fn remove_batch(&mut self, mean: f64, num_samples: u32) {
-        if num_samples == 0 {
-            return;
-        }
-
-        assert!(num_samples <= self.visits, "cannot remove more samples than present");
-
-        if num_samples == self.visits {
-            self.visits = 0;
-            self.value = 0.0;
-
-            return;
-        }
-
-        let n = f64::from(self.visits);
-        let k = f64::from(num_samples);
-
-        self.value -= (k / (n - k)) * (mean - self.value);
-        self.visits -= num_samples;
-    }
-}
-
-impl Mcts {
+impl<G: GameState> Mcts<G> {
     /// Creates a new Monte Carlo Tree Search instance.
     ///
     /// The `root_move` is an arbitrary move that represents the root of the
     /// tree.
     #[must_use]
-    pub fn new(root_move: Move) -> Mcts {
+    pub fn new(root_move: G::Move, options: MctsOptions) -> Self {
         let mut moves = IndexMap::with_hasher(FxBuildHasher);
 
         let entry = moves.entry(root_move);
@@ -192,18 +119,7 @@ impl Mcts {
 
         let _ = entry.or_default();
 
-        Mcts {
-            nodes: vec![Node::new(SENTINEL, handle)],
-            moves,
-            exploration_rate: 0.1,
-            // Going from 0 to 2 is a gainer; going from 2 to 16 is a non-regression,
-            // but with substantial memory savings.
-            //
-            // Surprisingly, this coincides with the results from Lorentz (2016) [6]: in
-            // practice, this is ≈ 8 real moves in our game, which was also the optimal
-            // number of moves in their experiments.
-            termination_moves: 16,
-        }
+        Mcts { options, moves, nodes: vec![Node::new(SENTINEL, handle)] }
     }
 
     /// Returns the number of nodes in the tree.
@@ -242,7 +158,7 @@ impl Mcts {
     pub fn select_and_expand(
         &mut self,
         node: usize,
-        game: &mut Game,
+        game: &mut G,
         rng: &mut impl Rng,
     ) -> usize {
         if self.nodes[node].visits == 0 || game.is_over() {
@@ -255,7 +171,7 @@ impl Mcts {
 
         let next = self.select_node(node, rng);
 
-        let (&mov, _) = self.moves.get_index(self.nodes[next].mov).unwrap();
+        let (mov, _) = self.moves.get_index(self.nodes[next].mov).unwrap();
         game.play(mov);
 
         self.select_and_expand(next, game, rng)
@@ -269,7 +185,7 @@ impl Mcts {
     /// # Panics
     ///
     /// Panics if `node` is not a leaf or if there are no legal moves available.
-    fn expand_node(&mut self, node: usize, game: &Game, rng: &mut impl Rng) {
+    fn expand_node(&mut self, node: usize, game: &G, rng: &mut impl Rng) {
         assert!(self.nodes[node].is_leaf(), "`node` should be a leaf");
 
         let head = self.nodes.len();
@@ -319,7 +235,7 @@ impl Mcts {
             return head;
         }
 
-        if rng.random_bool(self.exploration_rate) {
+        if rng.random_bool(self.options.exploration_rate) {
             return rng.random_range(head..last);
         }
 
@@ -351,16 +267,16 @@ impl Mcts {
     /// # Panics
     ///
     /// Panics if no legal moves are available during the playout.
-    pub fn default_policy(&self, game: &mut Game, rng: &mut impl Rng) -> f64 {
-        let color = game.color;
+    pub fn default_policy(&self, game: &mut G, rng: &mut impl Rng) -> f64 {
+        let color = game.color();
 
-        for _ in 0..self.termination_moves {
+        for _ in 0..self.options.termination_moves {
             if game.is_over() {
                 break;
             }
 
             let mov = game.moves().choose(rng).unwrap();
-            game.play(mov);
+            game.play(&mov);
         }
 
         game.evaluate(color)
@@ -400,9 +316,9 @@ impl Mcts {
     pub fn search_while(
         &mut self,
         node: usize,
-        game: &Game,
+        game: &G,
         rng: &mut impl Rng,
-        mut predicate: impl FnMut(&Mcts, &Node, &Game) -> bool,
+        mut predicate: impl FnMut(&Self, &Node, &G) -> bool,
     ) -> Option<usize> {
         if !predicate(self, &self.nodes[node], game) {
             return self.best_child(node);
@@ -433,7 +349,7 @@ impl Mcts {
     pub fn search(
         &mut self,
         node: usize,
-        game: &Game,
+        game: &G,
         rng: &mut impl Rng,
         max_time: Option<Duration>,
         max_iters: Option<u32>,
@@ -443,11 +359,11 @@ impl Mcts {
         let mut nodes = 0;
 
         let start_time = Instant::now();
-        let root_depth = game.depth;
+        let root_depth = game.depth();
 
         self.search_while(node, game, rng, |_mcts, _node, game| {
             iters += 1;
-            nodes += game.depth - root_depth;
+            nodes += game.depth() - root_depth;
 
             max_time.is_none_or(|t| start_time.elapsed() < t)
                 && max_iters.is_none_or(|n| iters < n)
@@ -473,7 +389,7 @@ impl Mcts {
     pub fn search_timed(
         &mut self,
         node: usize,
-        game: &Game,
+        game: &G,
         rng: &mut impl Rng,
         clock: Duration,
         increment: Duration,
@@ -535,7 +451,7 @@ impl Mcts {
     ///
     /// This method invalidates all existing indices into the tree.
     #[must_use]
-    pub fn reroot_to_move(mut self, mov: Move) -> Option<Mcts> {
+    pub fn reroot_to_move(mut self, mov: G::Move) -> Option<Self> {
         let entry = self.moves.entry(mov);
         let key = entry.index();
 

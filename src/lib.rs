@@ -1,5 +1,10 @@
-pub mod game;
-pub mod mcts;
+mod game;
+mod history;
+mod mcts;
+mod node;
 
-/// Pins a specific generator for portability and reproducibility.
-pub type DefaultRng = rand_xoshiro::Xoshiro256PlusPlus;
+pub use crate::{
+    game::GameState,
+    mcts::{Mcts, MctsOptions},
+    node::Node,
+};
