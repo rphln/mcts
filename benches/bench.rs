@@ -4,7 +4,7 @@ extern crate test;
 use std::hint::black_box;
 
 use rand::prelude::*;
-use swift_swallow_tree_search::{GameState, Mcts, MctsOptions};
+use swift_swallow_mcts::{GameState, Mcts, MctsOptions};
 use test::Bencher;
 
 /// Number of columns.

@@ -1,5 +1,5 @@
 [package]
-name = "swift_swallow_tree_search"
+name = "swift-swallow-mcts"
 version = "0.1.0"
 edition = "2024"
 
